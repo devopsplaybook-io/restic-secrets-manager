@@ -96,7 +96,7 @@ restic-secrets-manager/
 - Multi-stage build: builder stage compiles server + generates web, runtime stage uses `node:26-alpine`
 - Runtime image includes the `restic` binary
 - Single container serves both API and static web files
-- Entrypoint replaces placeholder `APPLICATION_TITLE` in PWA manifest at startup
+- Entrypoint replaces placeholder `APPLICATION_TITLE` in every generated web file (HTML pages, JS bundles, PWA manifest) at startup
 
 ## CI/CD
 
