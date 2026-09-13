@@ -1,0 +1,21 @@
+{
+  "name": "restic-secrets-manager",
+  "version": "0.3.0",
+  "description": "Web UI to manage application secrets backed by restic repositories",
+  "main": "ecosystem.config.js",
+  "scripts": {
+    "dev": "./docs/dev/run-dev-env.sh",
+    "dependencies": "./docs/dev/run-dev-dependencies-rebuild.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devopsplaybook-io/restic-secrets-manager.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/devopsplaybook-io/restic-secrets-manager/issues"
+  },
+  "homepage": "https://github.com/devopsplaybook-io/restic-secrets-manager#readme"
+}

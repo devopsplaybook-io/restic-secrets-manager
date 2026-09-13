@@ -1,0 +1,4 @@
+{
+  "CORS_POLICY_ORIGIN": "*",
+  "DATABASE_TYPE": "sqlite"
+}

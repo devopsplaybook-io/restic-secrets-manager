@@ -1,0 +1,8 @@
+{
+  "name": "restic-secrets-manager-proxy",
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "start": "./start.sh"
+  }
+}

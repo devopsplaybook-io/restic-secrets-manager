@@ -1,0 +1,17 @@
+/tmp
+/*/node_modules
+/*/docker-packaging
+/*/dist
+/*/docker-packaging-config/files
+/builds
+node_modules/
+coverage
+/docs/dev/env.sh
+.vscode
+/env-dev.js
+/*/tmp
+/*/data
+restic-secrets-manager-proxy/bin/
+restic-secrets-manager-web/.nuxt
+restic-secrets-manager-web/.output
+restic-secrets-manager-server/data
