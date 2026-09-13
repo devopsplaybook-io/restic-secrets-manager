@@ -102,3 +102,27 @@ describe("Secret normalizeData", () => {
     ).toEqual({ A: "x", B: "1", C: "true" });
   });
 });
+
+describe("Secret fromJson", () => {
+  it("should keep the generated dates when the body has none", () => {
+    const secret = Secret.fromJson({
+      projectId: "p1",
+      name: "name",
+      data: { KEY: "value" },
+    }) as Secret;
+    expect(secret.dateCreated).toBeTruthy();
+    expect(secret.dateUpdated).toBeTruthy();
+    expect(new Date(secret.dateCreated).getTime()).not.toBeNaN();
+  });
+
+  it("should preserve provided dates (db rows)", () => {
+    const secret = Secret.fromJson({
+      projectId: "p1",
+      name: "name",
+      dateCreated: "2026-01-02T03:04:05.000Z",
+      dateUpdated: "2026-01-03T03:04:05.000Z",
+    }) as Secret;
+    expect(secret.dateCreated).toBe("2026-01-02T03:04:05.000Z");
+    expect(secret.dateUpdated).toBe("2026-01-03T03:04:05.000Z");
+  });
+});

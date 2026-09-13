@@ -26,8 +26,14 @@ export class Secret {
       }
     }
     secret.data = data;
-    secret.dateCreated = json.dateCreated as string;
-    secret.dateUpdated = json.dateUpdated as string;
+    // Request bodies carry no dates: keep the constructor-generated
+    // timestamps so inserts never receive an undefined value
+    if (json.dateCreated) {
+      secret.dateCreated = json.dateCreated as string;
+    }
+    if (json.dateUpdated) {
+      secret.dateUpdated = json.dateUpdated as string;
+    }
     return secret;
   }
 

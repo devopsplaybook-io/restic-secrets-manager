@@ -25,7 +25,11 @@ export class Project {
     project.resticPassword = json.resticPassword as string;
     project.lastSyncSnapshotId = (json.lastSyncSnapshotId as string) || "";
     project.lastSyncSnapshotTime = (json.lastSyncSnapshotTime as string) || "";
-    project.dateCreated = json.dateCreated as string;
+    // Request bodies carry no dateCreated: keep the constructor-generated
+    // timestamp so inserts never receive an undefined value
+    if (json.dateCreated) {
+      project.dateCreated = json.dateCreated as string;
+    }
     return project;
   }
 

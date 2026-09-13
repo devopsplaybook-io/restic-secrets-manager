@@ -110,4 +110,24 @@ describe("Project fromJson", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(Project.fromJson(null as any)).toBeNull();
   });
+
+  it("should keep the generated dateCreated when the body has none", () => {
+    const project = Project.fromJson({
+      name: "Test",
+      s3Endpoint: "e",
+      s3Bucket: "b",
+    }) as Project;
+    expect(project.dateCreated).toBeTruthy();
+    expect(new Date(project.dateCreated).getTime()).not.toBeNaN();
+  });
+
+  it("should preserve a provided dateCreated (db rows)", () => {
+    const project = Project.fromJson({
+      name: "Test",
+      s3Endpoint: "e",
+      s3Bucket: "b",
+      dateCreated: "2026-01-02T03:04:05.000Z",
+    }) as Project;
+    expect(project.dateCreated).toBe("2026-01-02T03:04:05.000Z");
+  });
 });
