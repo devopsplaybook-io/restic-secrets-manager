@@ -61,7 +61,7 @@
       </small>
     </article>
     <!-- SECRET EDITOR MODAL -->
-    <dialog v-if="showSecretModal" :open="showSecretModal" @click.self="closeSecretModal">
+    <dialog v-if="showSecretModal" ref="secret-editor" @click.self="secretModal.close()" @close="onSecretModalClosed">
       <article class="secret-editor">
         <header>
           <button aria-label="Close" rel="prev" @click="closeSecretModal"/>
@@ -132,10 +132,10 @@
     </dialog>
 
     <!-- DELETE CONFIRM MODAL -->
-    <dialog v-if="showDeleteConfirm" :open="showDeleteConfirm" @click.self="showDeleteConfirm = false">
+    <dialog v-if="showDeleteConfirm" ref="delete-confirm" @click.self="deleteModal.close()" @close="onDeleteModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="showDeleteConfirm = false"/>
+          <button aria-label="Close" rel="prev" @click="deleteModal.close()"/>
           <h3><i class="bi bi-exclamation-triangle-fill"/> Delete Secret</h3>
         </header>
         <p>
@@ -145,7 +145,7 @@
         </p>
         <p>This action cannot be undone (until the next pull restores it).</p>
         <footer>
-          <button class="secondary" @click="showDeleteConfirm = false">Cancel</button>
+          <button class="secondary" @click="deleteModal.close()">Cancel</button>
           <button class="contrast" :disabled="deleting" @click="executeDelete">
             {{ deleting ? "Deleting…" : "Delete" }}
           </button>
@@ -165,13 +165,15 @@ const project = ref(null);
 const secrets = ref([]);
 const error = ref("");
 
-const showSecretModal = ref(false);
+const secretModal = useModalDialog("secret-editor");
+const showSecretModal = secretModal.isOpen;
 const editingSecret = ref(null);
 const savingSecret = ref(false);
 const secretForm = ref({ name: "", rows: [] });
 const revealedRows = ref(new Set());
 
-const showDeleteConfirm = ref(false);
+const deleteModal = useModalDialog("delete-confirm");
+const showDeleteConfirm = deleteModal.isOpen;
 const deleteTarget = ref(null);
 const deleting = ref(false);
 
@@ -217,7 +219,7 @@ function openCreateSecret() {
   editingSecret.value = null;
   secretForm.value = { name: "", rows: [{ key: "", value: "" }] };
   revealedRows.value = new Set();
-  showSecretModal.value = true;
+  secretModal.open();
 }
 
 function openEditSecret(secret) {
@@ -227,11 +229,16 @@ function openEditSecret(secret) {
     rows: Object.keys(secret.data).map((key) => ({ key, value: secret.data[key] })),
   };
   revealedRows.value = new Set();
-  showSecretModal.value = true;
+  secretModal.open();
 }
 
 function closeSecretModal() {
-  showSecretModal.value = false;
+  secretModal.close();
+  editingSecret.value = null;
+}
+
+function onSecretModalClosed() {
+  secretModal.onClose();
   editingSecret.value = null;
 }
 
@@ -287,7 +294,12 @@ async function saveSecret() {
 
 function confirmDeleteSecret(secret) {
   deleteTarget.value = secret;
-  showDeleteConfirm.value = true;
+  deleteModal.open();
+}
+
+function onDeleteModalClosed() {
+  deleteModal.onClose();
+  deleteTarget.value = null;
 }
 
 async function executeDelete() {
@@ -296,12 +308,11 @@ async function executeDelete() {
     await api.delete(
       `/projects/${route.params.id}/secrets/${deleteTarget.value.id}`,
     );
-    showDeleteConfirm.value = false;
-    deleteTarget.value = null;
+    deleteModal.close();
     await loadSecrets();
   } catch (e) {
     error.value = e.response?.data?.error || "Unable to delete the secret";
-    showDeleteConfirm.value = false;
+    deleteModal.close();
   } finally {
     deleting.value = false;
   }

@@ -60,7 +60,7 @@
       <p>No users found.</p>
     </div>
     <!-- CREATE/EDIT USER MODAL -->
-    <dialog v-if="showUserModal" :open="showUserModal" @click.self="closeUserModal">
+    <dialog v-if="showUserModal" ref="user-editor" @click.self="closeUserModal" @close="onUserModalClosed">
       <article>
         <header>
           <button aria-label="Close" rel="prev" @click="closeUserModal"/>
@@ -120,10 +120,10 @@
     </dialog>
 
     <!-- DELETE CONFIRM MODAL -->
-    <dialog v-if="showDeleteConfirm" :open="showDeleteConfirm" @click.self="showDeleteConfirm = false">
+    <dialog v-if="showDeleteConfirm" ref="delete-user" @click.self="deleteModal.close()" @close="onDeleteModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="showDeleteConfirm = false"/>
+          <button aria-label="Close" rel="prev" @click="deleteModal.close()"/>
           <h3><i class="bi bi-exclamation-triangle-fill"/> Delete User</h3>
         </header>
         <p>
@@ -133,7 +133,7 @@
         </p>
         <p>This action cannot be undone.</p>
         <footer>
-          <button class="secondary" @click="showDeleteConfirm = false">Cancel</button>
+          <button class="secondary" @click="deleteModal.close()">Cancel</button>
           <button class="contrast" :disabled="deletingUser" @click="executeDelete">
             {{ deletingUser ? "Deleting…" : "Delete" }}
           </button>
@@ -153,12 +153,14 @@ const projects = ref([]);
 const currentUserId = ref(null);
 const error = ref("");
 
-const showUserModal = ref(false);
+const userModal = useModalDialog("user-editor");
+const showUserModal = userModal.isOpen;
 const editingUser = ref(null);
 const savingUser = ref(false);
 const userForm = ref({ name: "", password: "", role: "user", scopes: [] });
 
-const showDeleteConfirm = ref(false);
+const deleteModal = useModalDialog("delete-user");
+const showDeleteConfirm = deleteModal.isOpen;
 const deleteTarget = ref(null);
 const deletingUser = ref(false);
 
@@ -216,7 +218,7 @@ function resetUserForm() {
 function openCreateUser() {
   editingUser.value = null;
   resetUserForm();
-  showUserModal.value = true;
+  userModal.open();
 }
 
 function openEditUser(user) {
@@ -227,11 +229,17 @@ function openEditUser(user) {
     role: user.role,
     scopes: user.scopes ? [...user.scopes] : [],
   };
-  showUserModal.value = true;
+  userModal.open();
 }
 
 function closeUserModal() {
-  showUserModal.value = false;
+  userModal.close();
+  editingUser.value = null;
+  resetUserForm();
+}
+
+function onUserModalClosed() {
+  userModal.onClose();
   editingUser.value = null;
   resetUserForm();
 }
@@ -273,19 +281,23 @@ async function saveUser() {
 
 function confirmDeleteUser(user) {
   deleteTarget.value = user;
-  showDeleteConfirm.value = true;
+  deleteModal.open();
+}
+
+function onDeleteModalClosed() {
+  deleteModal.onClose();
+  deleteTarget.value = null;
 }
 
 async function executeDelete() {
   deletingUser.value = true;
   try {
     await api.delete(`/users/${deleteTarget.value.id}`);
-    showDeleteConfirm.value = false;
-    deleteTarget.value = null;
+    deleteModal.close();
     await loadUsers();
   } catch (e) {
     error.value = e.response?.data?.error || "Unable to delete the user";
-    showDeleteConfirm.value = false;
+    deleteModal.close();
   } finally {
     deletingUser.value = false;
   }

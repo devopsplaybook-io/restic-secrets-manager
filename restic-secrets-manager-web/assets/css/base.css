@@ -188,7 +188,9 @@ article > header,
 article > footer {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: max-content;
+  /* minmax(0, max-content) lets long titles (e.g. "Edit Secret: <name>")
+     shrink and wrap instead of overflowing the card/dialog */
+  grid-auto-columns: minmax(0, max-content);
   justify-content: space-between;
   align-items: center;
   gap: var(--space-sm);
@@ -470,7 +472,9 @@ dialog::backdrop {
 
 dialog[open] {
   display: grid;
-  place-items: center;
+  /* "safe" keeps tall dialogs (e.g. the secret editor with many rows)
+     scrollable instead of clipping their top when centered */
+  place-items: safe center;
   /* Span the layout viewport so % widths on the article resolve against
      it — 100vw would include the page scrollbar and cause a horizontal
      scrollbar on the dialog */
@@ -508,6 +512,12 @@ dialog article {
 dialog article > header {
   font-size: var(--text-lg);
   font-weight: var(--weight-bold);
+}
+
+/* Dialog titles embed user-provided names that may contain no break
+   opportunities (letters/digits only) — force wrapping */
+dialog article > header h3 {
+  overflow-wrap: anywhere;
 }
 
 dialog article section {

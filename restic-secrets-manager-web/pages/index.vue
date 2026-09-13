@@ -60,7 +60,7 @@
       <p>No projects yet.</p>
     </div>
     <!-- CREATE PROJECT MODAL -->
-    <dialog v-if="showCreateModal" :open="showCreateModal" @click.self="closeCreateModal">
+    <dialog v-if="showCreateModal" ref="create-project" @click.self="closeCreateModal" @close="onCreateModalClosed">
       <article>
         <header>
           <button aria-label="Close" rel="prev" @click="closeCreateModal"/>
@@ -120,10 +120,10 @@
     </dialog>
 
     <!-- DELETE CONFIRM MODAL -->
-    <dialog v-if="showDeleteConfirm" :open="showDeleteConfirm" @click.self="showDeleteConfirm = false">
+    <dialog v-if="showDeleteConfirm" ref="delete-project" @click.self="deleteModal.close()" @close="onDeleteModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="showDeleteConfirm = false"/>
+          <button aria-label="Close" rel="prev" @click="deleteModal.close()"/>
           <h3><i class="bi bi-exclamation-triangle-fill"/> Delete Project</h3>
         </header>
         <p>
@@ -134,7 +134,7 @@
         </p>
         <p>This action cannot be undone.</p>
         <footer>
-          <button class="secondary" @click="showDeleteConfirm = false">Cancel</button>
+          <button class="secondary" @click="deleteModal.close()">Cancel</button>
           <button class="contrast" :disabled="deleting" @click="executeDelete">
             {{ deleting ? "Deleting…" : "Delete" }}
           </button>
@@ -143,15 +143,15 @@
     </dialog>
 
     <!-- SYNC RESULT MODAL -->
-    <dialog v-if="syncResult" :open="!!syncResult" @click.self="syncResult = null">
+    <dialog v-if="showSyncModal" ref="sync-result" @click.self="closeSyncModal" @close="onSyncModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="syncResult = null"/>
+          <button aria-label="Close" rel="prev" @click="closeSyncModal"/>
           <h3><i class="bi bi-arrow-repeat"/> Synchronization Result</h3>
         </header>
-        <p>{{ syncResult.message }}</p>
+        <p>{{ syncResult?.message }}</p>
         <footer>
-          <button @click="syncResult = null">Close</button>
+          <button @click="closeSyncModal">Close</button>
         </footer>
       </article>
     </dialog>
@@ -164,12 +164,19 @@ const authStore = useAuthStore();
 
 const projects = ref([]);
 const error = ref("");
-const showCreateModal = ref(false);
+
+const createModal = useModalDialog("create-project");
+const showCreateModal = createModal.isOpen;
 const creating = ref(false);
 const projectForm = ref({});
-const showDeleteConfirm = ref(false);
+
+const deleteModal = useModalDialog("delete-project");
+const showDeleteConfirm = deleteModal.isOpen;
 const deleteTarget = ref(null);
 const deleting = ref(false);
+
+const syncModal = useModalDialog("sync-result");
+const showSyncModal = syncModal.isOpen;
 const syncing = ref("");
 const syncResult = ref(null);
 
@@ -216,11 +223,15 @@ function formatTime(iso) {
 
 function openCreateProject() {
   projectForm.value = defaultForm();
-  showCreateModal.value = true;
+  createModal.open();
 }
 
 function closeCreateModal() {
-  showCreateModal.value = false;
+  createModal.close();
+}
+
+function onCreateModalClosed() {
+  createModal.onClose();
 }
 
 async function createProject() {
@@ -241,25 +252,39 @@ async function createProject() {
 
 function confirmDeleteProject(project) {
   deleteTarget.value = project;
-  showDeleteConfirm.value = true;
+  deleteModal.open();
+}
+
+function onDeleteModalClosed() {
+  deleteModal.onClose();
+  deleteTarget.value = null;
 }
 
 async function executeDelete() {
   deleting.value = true;
   try {
     await api.delete(`/projects/${deleteTarget.value.id}`);
-    showDeleteConfirm.value = false;
-    deleteTarget.value = null;
+    deleteModal.close();
     await loadProjects();
   } catch (e) {
     error.value = e.response?.data?.error || "Unable to delete the project";
-    showDeleteConfirm.value = false;
+    deleteModal.close();
   } finally {
     deleting.value = false;
   }
 }
 
 // Pull / Push
+
+function closeSyncModal() {
+  syncModal.close();
+  syncResult.value = null;
+}
+
+function onSyncModalClosed() {
+  syncModal.onClose();
+  syncResult.value = null;
+}
 
 async function pullProject(project) {
   syncing.value = project.id;
@@ -269,6 +294,7 @@ async function pullProject(project) {
     syncResult.value = {
       message: `Pulled ${res.data.secrets} secret(s) and ${res.data.keys} key(s) from snapshot ${res.data.snapshotId.substring(0, 8)}.`,
     };
+    syncModal.open();
     await loadProjects();
   } catch (e) {
     error.value = e.response?.data?.error || "Pull failed";
@@ -285,12 +311,14 @@ async function pushProject(project) {
     syncResult.value = {
       message: `Pushed secrets to snapshot ${res.data.snapshotId.substring(0, 8)}.`,
     };
+    syncModal.open();
     await loadProjects();
   } catch (e) {
     if (e.response?.status === 409) {
       syncResult.value = {
         message: e.response.data.error,
       };
+      syncModal.open();
     } else {
       error.value = e.response?.data?.error || "Push failed";
     }
