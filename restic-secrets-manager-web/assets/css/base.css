@@ -188,7 +188,9 @@ article > header,
 article > footer {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: max-content;
+  /* minmax(0, max-content) lets long titles (e.g. "Edit Secret: <name>")
+     shrink and wrap instead of overflowing the card/dialog */
+  grid-auto-columns: minmax(0, max-content);
   justify-content: space-between;
   align-items: center;
   gap: var(--space-sm);
@@ -510,6 +512,12 @@ dialog article {
 dialog article > header {
   font-size: var(--text-lg);
   font-weight: var(--weight-bold);
+}
+
+/* Dialog titles embed user-provided names that may contain no break
+   opportunities (letters/digits only) — force wrapping */
+dialog article > header h3 {
+  overflow-wrap: anywhere;
 }
 
 dialog article section {
