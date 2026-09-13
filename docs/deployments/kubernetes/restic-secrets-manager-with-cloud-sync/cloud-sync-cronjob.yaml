@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kubernetes-secrets-cloud-sync
+  namespace: restic-secrets-manager
+  labels:
+    app: kubernetes-secrets-cloud-sync
+spec:
+  # Sync every 6 hours; adjust to your needs.
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: kubernetes-secrets-cloud-sync
+        spec:
+          serviceAccountName: kubernetes-secrets-cloud-sync
+          restartPolicy: Never
+          containers:
+            - image: kubernetes-secrets-cloud-sync
+              name: kubernetes-secrets-cloud-sync
+              imagePullPolicy: Always
+              envFrom:
+                - secretRef:
+                    name: kubernetes-secrets-cloud-sync-config
+              env:
+                # Run one sync and exit (CronJob mode). For a long-lived
+                # Deployment instead, set JOB_MODE=false and SYNC_CRON_SCHEDULE.
+                - name: JOB_MODE
+                  value: "true"
+                # Delete managed secrets that are no longer annotated:
+                - name: DELETE_ORPHANED_SECRETS
+                  value: "true"
+              resources:
+                limits:
+                  memory: 500Mi
+                  cpu: 200m
+                requests:
+                  memory: 50Mi
+                  cpu: 50m

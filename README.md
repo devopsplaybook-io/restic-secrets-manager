@@ -24,6 +24,41 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 
 The `restic` binary must be available on the machine running the server (it is included in the Docker image).
 
+## Quick Start
+
+### Docker
+
+Run restic-secrets-manager in Docker:
+
+```bash
+mkdir -p data
+docker run --name restic-secrets-manager -p 8080:8080 -e JWT_KEY=<generate-a-strong-random-key> -v "$(pwd)/data:/data" -d devopsplaybookio/restic-secrets-manager
+```
+
+- Docker image: [`devopsplaybookio/restic-secrets-manager`](https://hub.docker.com/r/devopsplaybookio/restic-secrets-manager)
+- Exposes port: `8080` (web UI and API)
+- Data volume: `/data` (SQLite database)
+
+### Kubernetes
+
+Deploy restic-secrets-manager on Kubernetes:
+
+```bash
+git clone https://github.com/devopsplaybook-io/restic-secrets-manager
+cd restic-secrets-manager/docs/deployments/kubernetes/restic-secrets-manager
+kubectl kustomize . | kubectl apply -f -
+```
+
+> **Warning:** Replace the `CHANGE_ME` value of `JWT_KEY` in [`base/secret.yaml`](./docs/deployments/kubernetes/restic-secrets-manager/base/secret.yaml) with a strong random key before deploying.
+
+> **Note:** The service is exposed as a `ClusterIP` inside the cluster; to access the web UI externally, use an Ingress or a NodePort service.
+
+## Sync secrets into Kubernetes
+
+restic-secrets-manager pairs with [kubernetes-secrets-cloud-sync](https://github.com/devopsplaybook-io/kubernetes-secrets-cloud-sync): secrets authored in the web UI are pushed to a restic repository, and kubernetes-secrets-cloud-sync materializes them as Kubernetes Secrets (`cloudsync-<secret-name>`) in the namespaces you annotate.
+
+A combined Kustomize deployment of both tools is provided — see the [deployment guide](./docs/deployments/kubernetes/restic-secrets-manager-with-cloud-sync).
+
 ## Configuration
 
 Configuration is provided by environment variables (a `config.json` file next to the server can also be used):
@@ -57,25 +92,7 @@ On first start, the application detects that no user exists and walks you throug
 
 ## Development
 
-Requirements: Node.js 26+, npm, [pm2](https://pm2.keymetrics.io/) and the `restic` CLI (for pull/push).
-
-```bash
-# Install dependencies and start proxy (:9999), server (:8080) and web (:3000)
-npm run dev
-
-# Rebuild native dependencies (e.g. after a Node.js upgrade)
-npm run dependencies
-```
-
-Verification per component:
-
-```bash
-cd restic-secrets-manager-server
-npm run build && npm run lint && npm run test
-
-cd ../restic-secrets-manager-web
-npm run generate && npm run lint
-```
+See [docs/dev/README.md](./docs/dev/README.md) for the development setup (Node.js, pm2, dev server, per-component build/lint/test).
 
 ## Deployment
 
@@ -83,16 +100,13 @@ The Docker image is a multi-stage build: it compiles the server, generates the w
 
 ```bash
 docker build -t restic-secrets-manager .
-
-docker run -d \
-  -p 8080:8080 \
-  -e JWT_KEY=<generate-a-strong-random-key> \
-  -v ./data:/data \
-  --name restic-secrets-manager \
-  restic-secrets-manager
 ```
 
-Additional examples are available in [docs/deployments](./docs/deployments) (Docker Compose and Kubernetes).
+Deployment examples with real deployment files are available in [docs/deployments](./docs/deployments):
+
+- [Docker Compose](./docs/deployments/docker-compose/restic-secrets-manager/docker-compose.yaml)
+- Kubernetes (Kustomize): [`docs/deployments/kubernetes/restic-secrets-manager`](./docs/deployments/kubernetes/restic-secrets-manager)
+- Kubernetes, combined with [kubernetes-secrets-cloud-sync](https://github.com/devopsplaybook-io/kubernetes-secrets-cloud-sync): [`docs/deployments/kubernetes/restic-secrets-manager-with-cloud-sync`](./docs/deployments/kubernetes/restic-secrets-manager-with-cloud-sync)
 
 ## Security notes
 

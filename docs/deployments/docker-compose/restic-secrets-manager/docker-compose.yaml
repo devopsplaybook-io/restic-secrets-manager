@@ -1,0 +1,13 @@
+services:
+  restic-secrets-manager:
+    image: devopsplaybookio/restic-secrets-manager:latest
+    container_name: restic-secrets-manager
+    ports:
+      - "8080:8080"
+    environment:
+      # WARNING: replace with a strong random key before deploying
+      # (e.g. `openssl rand -base64 48`):
+      - JWT_KEY=CHANGE_ME
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
