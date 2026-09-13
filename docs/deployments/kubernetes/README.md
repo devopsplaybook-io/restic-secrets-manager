@@ -1,78 +1,24 @@
-# Kubernetes deployment
+# Deploying restic-secrets-manager with Kubernetes
 
-Example manifests for deploying restic-secrets-manager.
+In the [`restic-secrets-manager`](./restic-secrets-manager) directory, you will find an example of deployment using YAML files (with Kustomize):
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: restic-secrets-manager
-  labels:
-    app: restic-secrets-manager
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: restic-secrets-manager
-  template:
-    metadata:
-      labels:
-        app: restic-secrets-manager
-    spec:
-      containers:
-        - name: restic-secrets-manager
-          image: didierhoarau/restic-secrets-manager:latest
-          ports:
-            - containerPort: 8080
-          env:
-            - name: JWT_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: restic-secrets-manager
-                  key: JWT_KEY
-          volumeMounts:
-            - name: data
-              mountPath: /data
-          livenessProbe:
-            httpGet:
-              path: /api/status
-              port: 8080
-            initialDelaySeconds: 10
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /api/status
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: restic-secrets-manager
+- [`kustomization.yaml`](./restic-secrets-manager/kustomization.yaml) — entry point; sets the namespace and the Docker image (`devopsplaybookio/restic-secrets-manager`)
+- [`base/namespace.yaml`](./restic-secrets-manager/base/namespace.yaml) — dedicated namespace
+- [`base/pvc.yaml`](./restic-secrets-manager/base/pvc.yaml) — persistent volume for `/data` (SQLite database)
+- [`base/deployment.yaml`](./restic-secrets-manager/base/deployment.yaml) — application deployment (web UI and API served on port `8080`)
+- [`base/service.yaml`](./restic-secrets-manager/base/service.yaml) — ClusterIP service
+- [`base/secret.yaml`](./restic-secrets-manager/base/secret.yaml) — `JWT_KEY` secret (replace the placeholder value before deploying)
+
+To launch the application in Kubernetes:
+
+```bash
+git clone https://github.com/devopsplaybook-io/restic-secrets-manager
+cd restic-secrets-manager/docs/deployments/kubernetes/restic-secrets-manager
+kubectl kustomize . | kubectl apply -f -
 ```
 
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: restic-secrets-manager
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
-```
+> **Warning:** Before deploying, replace the `CHANGE_ME` value of `JWT_KEY` in [`base/secret.yaml`](./restic-secrets-manager/base/secret.yaml) with a strong random key (e.g. `openssl rand -base64 48`).
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: restic-secrets-manager
-spec:
-  selector:
-    app: restic-secrets-manager
-  ports:
-    - port: 80
-      targetPort: 8080
-```
+On first start, the application detects that no user exists and walks you through the creation of the initial administrator account. The service is exposed as a `ClusterIP` inside the cluster; to access the web UI externally, use an Ingress or a NodePort service.
+
+To sync the managed secrets into Kubernetes namespaces, see the combined deployment with [kubernetes-secrets-cloud-sync](./restic-secrets-manager-with-cloud-sync).

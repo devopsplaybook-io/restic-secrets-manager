@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubernetes-secrets-cloud-sync
+  namespace: restic-secrets-manager
+  labels:
+    app: kubernetes-secrets-cloud-sync
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernetes-secrets-cloud-sync
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubernetes-secrets-cloud-sync
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubernetes-secrets-cloud-sync
+subjects:
+  - kind: ServiceAccount
+    name: kubernetes-secrets-cloud-sync
+    namespace: restic-secrets-manager
