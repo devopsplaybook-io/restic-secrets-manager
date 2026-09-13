@@ -1,0 +1,278 @@
+/* ============================================================
+   Restic Secrets Manager Design Language — App Patterns
+   Shared component and page patterns built on the design
+   tokens (tokens.css) and base element styles (base.css).
+   Grid-first layouts; flexbox only for inline alignments.
+   ============================================================ */
+
+/* ============================================
+   Standard card component
+   ============================================ */
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.card header {
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-sm);
+}
+
+/* ============================================
+   Shared page patterns
+   ============================================ */
+
+/* Page header (list views): title block + controls */
+.page-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+@media (max-width: 576px) {
+  .page-header {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Detail header (detail views with back link) */
+.detail-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+/* Standard section header */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+/* Standard action buttons row */
+.actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+/* Inline icon spacing */
+i.bi + span,
+span + i.bi {
+  margin-left: var(--space-xs);
+}
+
+/* Dialog footer / actions (button rows) */
+.dialog-footer,
+.dialog-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  justify-content: end;
+  align-items: center;
+  gap: calc(var(--space-2xs) * 1.5);
+}
+
+/* Close button (X button) */
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-2xl);
+  cursor: pointer;
+  padding: 0;
+  line-height: var(--leading-none);
+}
+
+.close-btn:hover {
+  color: var(--color-text);
+  background: transparent;
+}
+
+/* Consistent section spacing */
+.page-section {
+  margin-bottom: var(--space-lg);
+}
+
+/* ============================================
+   Badges and tags
+   ============================================ */
+
+/* Tag / badge pill */
+.tag,
+.label-tag {
+  display: inline-block;
+  padding: 0.1em 0.4em;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  font-size: var(--text-base);
+}
+
+/* Status badge (larger variant) */
+.status-badge {
+  display: inline-block;
+  padding: 0.2em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  font-size: var(--text-base);
+  width: fit-content;
+}
+
+/* ============================================
+   Empty state
+   ============================================ */
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-xl) var(--space-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-md);
+}
+
+.empty-state i {
+  font-size: var(--text-icon);
+  margin-bottom: var(--space-sm);
+}
+
+/* ============================================
+   Truncated text
+   ============================================ */
+
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Small muted text */
+.text-muted {
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+}
+
+/* ============================================
+   Shared Item Card Pattern (project cards)
+   Grid: [accent stripe | body]
+   ============================================ */
+
+.item-card {
+  position: relative;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  transition:
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast),
+    opacity var(--transition-fast);
+  user-select: none;
+}
+
+.item-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.item-card .card-accent {
+  width: var(--accent-width, 5px);
+  background: var(--color-primary);
+}
+
+.item-card .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  min-width: 0;
+  font-size: var(--text-md);
+}
+
+.item-card .card-body header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: 0;
+  margin: 0;
+  height: auto;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.item-card .card-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  flex: 1;
+  min-width: 0;
+}
+
+.item-card .item-icon {
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.item-card .item-title {
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  line-height: var(--leading-compact);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.item-card .card-body footer {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0;
+  margin: 0;
+  margin-top: var(--space-xs);
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+/* ============================================
+   Dialog helpers
+   ============================================ */
+
+dialog article section {
+  margin-bottom: var(--space-sm);
+}
+
+/* ============================================
+   Responsive Utilities
+   ============================================ */
+
+@media (max-width: 867px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 868px) {
+  .show-mobile {
+    display: none !important;
+  }
+}

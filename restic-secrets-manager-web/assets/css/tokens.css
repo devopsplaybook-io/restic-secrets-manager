@@ -1,0 +1,193 @@
+/* ============================================================
+   Restic Secrets Manager Design Language — Design Tokens
+   Single source of truth for colors, typography, spacing,
+   radii and shadows. Light theme is the default; the dark
+   theme is applied through [data-theme] (set by the app) with
+   a prefers-color-scheme fallback for pre-hydration rendering.
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---------- Font families ---------- */
+  --font-family:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-family-mono:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* ---------- Colors: primary ---------- */
+  --color-primary: #0f6da0;
+  --color-primary-hover: #0c5c88;
+  --color-primary-soft: rgba(15, 109, 160, 0.12);
+  --color-primary-text: #0f6da0;
+  --color-on-primary: #ffffff;
+  --color-focus-ring: rgba(15, 109, 160, 0.3);
+
+  /* ---------- Colors: text ---------- */
+  --color-text: #1d2832;
+  --color-text-secondary: #455869;
+  --color-text-muted: #6b7a88;
+  --color-text-inverse: #ffffff;
+
+  /* ---------- Colors: backgrounds ---------- */
+  --color-bg: #f4f6f8;
+  --color-surface: #ffffff;
+  --color-surface-hover: #eef1f4;
+  --color-code-bg: rgba(135, 131, 120, 0.15);
+
+  /* ---------- Colors: borders ---------- */
+  --color-border: #dbe1e7;
+  --color-border-strong: #b9c3cd;
+
+  /* ---------- Colors: status ---------- */
+  --color-success: #2e7d32;
+  --color-warning: #b26a00;
+  --color-danger: #c62828;
+  --color-danger-hover: #a91f1f;
+
+  /* ---------- Colors: contrast (inverse) surfaces ---------- */
+  --color-contrast-bg: #1d2832;
+  --color-contrast-on: #f4f6f8;
+
+  /* ---------- Colors: overlay ---------- */
+  --color-overlay: rgba(9, 20, 29, 0.55);
+
+  /* ---------- Spacing scale ---------- */
+  --space-2xs: 0.2em;
+  --space-xs: 0.25em;
+  --space-sm: 0.5em;
+  --space-md: 1em;
+  --space-lg: 1.5em;
+  --space-xl: 2em;
+
+  /* ---------- Typography scale ---------- */
+  --text-xs: 0.68em;
+  --text-sm: 0.78em;
+  --text-base: 0.85em;
+  --text-md: 0.9em;
+  --text-default: 1em;
+  --text-lg: 1.1em;
+  --text-xl: 1.3em;
+  --text-2xl: 1.5em;
+  --text-icon: 3em;
+
+  /* ---------- Font weight ---------- */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---------- Letter spacing ---------- */
+  --tracking-wide: 0.01em;
+  --tracking-wider: 0.04em;
+  --tracking-widest: 0.05em;
+
+  /* ---------- Line heights ---------- */
+  --leading-none: 1;
+  --leading-tight: 1.2;
+  --leading-compact: 1.3;
+  --leading-normal: 1.4;
+  --leading-relaxed: 1.5;
+  --leading-loose: 1.6;
+
+  /* ---------- Border radius ---------- */
+  --radius-sm: 0.25em;
+  --radius-md: 0.4em;
+  --radius-lg: 0.6em;
+  --radius-full: 999px;
+
+  /* ---------- Box shadows ---------- */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.13), 0 2px 4px rgba(0, 0, 0, 0.08);
+
+  /* ---------- Transitions ---------- */
+  --transition-fast: 150ms ease;
+  --transition-normal: 300ms ease;
+
+  /* ---------- Status accents ---------- */
+  --color-status-todo: #6c757d;
+  --color-status-progress: #0d6efd;
+  --color-status-done: #198754;
+  --color-status-review: #6f42c1;
+  --color-status-blocked: #dc3545;
+
+  /* ---------- Select arrow (theme-aware) ---------- */
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%236b7a88' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+}
+
+/* ---------- Dark theme (explicit attribute set by the app) ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-primary: #4fb3e8;
+  --color-primary-hover: #74c4ee;
+  --color-primary-soft: rgba(79, 179, 232, 0.16);
+  --color-primary-text: #74c4ee;
+  --color-on-primary: #06222f;
+  --color-focus-ring: rgba(79, 179, 232, 0.35);
+
+  --color-text: #d7dee4;
+  --color-text-secondary: #b6c2cc;
+  --color-text-muted: #8a99a6;
+  --color-text-inverse: #12191f;
+
+  --color-bg: #12191f;
+  --color-surface: #1b242c;
+  --color-surface-hover: #232e38;
+  --color-code-bg: rgba(135, 131, 120, 0.18);
+
+  --color-border: #2e3a44;
+  --color-border-strong: #43525e;
+
+  --color-success: #66bb6a;
+  --color-warning: #ffb74d;
+  --color-danger: #ef5350;
+  --color-danger-hover: #ff8a80;
+
+  --color-contrast-bg: #e8eef2;
+  --color-contrast-on: #12191f;
+
+  --color-overlay: rgba(0, 0, 0, 0.65);
+
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%238a99a6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+}
+
+/* ---------- Dark theme fallback (OS preference, before hydration) ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --color-primary: #4fb3e8;
+    --color-primary-hover: #74c4ee;
+    --color-primary-soft: rgba(79, 179, 232, 0.16);
+    --color-primary-text: #74c4ee;
+    --color-on-primary: #06222f;
+    --color-focus-ring: rgba(79, 179, 232, 0.35);
+
+    --color-text: #d7dee4;
+    --color-text-secondary: #b6c2cc;
+    --color-text-muted: #8a99a6;
+    --color-text-inverse: #12191f;
+
+    --color-bg: #12191f;
+    --color-surface: #1b242c;
+    --color-surface-hover: #232e38;
+    --color-code-bg: rgba(135, 131, 120, 0.18);
+
+    --color-border: #2e3a44;
+    --color-border-strong: #43525e;
+
+    --color-success: #66bb6a;
+    --color-warning: #ffb74d;
+    --color-danger: #ef5350;
+    --color-danger-hover: #ff8a80;
+
+    --color-contrast-bg: #e8eef2;
+    --color-contrast-on: #12191f;
+
+    --color-overlay: rgba(0, 0, 0, 0.65);
+
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%238a99a6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+  }
+}

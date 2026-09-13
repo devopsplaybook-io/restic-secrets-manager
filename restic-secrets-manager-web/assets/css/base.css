@@ -1,0 +1,608 @@
+/* ============================================================
+   Restic Secrets Manager Design Language — Base Layer
+   Classless element styles: reset, typography, forms, buttons,
+   tables, dialogs and navigation. Grid-first layout; flexbox is
+   reserved for single-axis, inline alignments.
+   ============================================================ */
+
+/* ============================================
+   Reset
+   ============================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  font-size: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ============================================
+   Typography
+   ============================================ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0 0 var(--space-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+}
+
+h1 {
+  font-size: var(--text-2xl);
+}
+h2 {
+  font-size: var(--text-xl);
+}
+h3 {
+  font-size: var(--text-lg);
+}
+h4,
+h5,
+h6 {
+  font-size: var(--text-default);
+}
+
+p {
+  margin: 0 0 var(--space-md);
+}
+
+small {
+  font-size: var(--text-sm);
+}
+
+strong,
+b {
+  font-weight: var(--weight-semibold);
+}
+
+a {
+  color: var(--color-primary-text);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: var(--space-md) 0;
+}
+
+blockquote {
+  margin: 0 0 var(--space-md);
+  padding: var(--space-xs) var(--space-md);
+  border-left: 3px solid var(--color-primary);
+  color: var(--color-text-muted);
+}
+
+ul,
+ol {
+  margin: 0 0 var(--space-md);
+  padding-left: 1.5em;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-family-mono);
+  font-size: var(--text-sm);
+}
+
+code {
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+  background: var(--color-code-bg);
+}
+
+pre {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-code-bg);
+  overflow-x: auto;
+}
+
+pre code {
+  padding: 0;
+  background: none;
+}
+
+kbd {
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--color-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+::selection {
+  background: var(--color-primary-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Grouped heading + lede */
+hgroup {
+  margin-bottom: var(--space-md);
+}
+
+hgroup h1,
+hgroup h2,
+hgroup h3,
+hgroup h4,
+hgroup h5,
+hgroup h6 {
+  margin: 0;
+}
+
+hgroup p {
+  margin: var(--space-2xs) 0 0;
+  color: var(--color-text-muted);
+}
+
+/* ============================================
+   Card (article)
+   ============================================ */
+
+article {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  box-shadow: var(--shadow-sm);
+}
+
+article > header,
+article > footer {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+article > header {
+  margin: calc(var(--space-md) * -1) calc(var(--space-md) * -1) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+article > footer {
+  margin: var(--space-md) calc(var(--space-md) * -1) calc(var(--space-md) * -1);
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ============================================
+   Buttons
+   ============================================ */
+
+button,
+input[type="submit"],
+input[type="button"],
+input[type="reset"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2xs);
+  padding: 0.45em 0.9em;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-family: inherit;
+  font-size: var(--text-default);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+button:hover,
+input[type="submit"]:hover,
+input[type="button"]:hover,
+input[type="reset"]:hover {
+  background: var(--color-primary-hover);
+  text-decoration: none;
+}
+
+button:focus-visible,
+input[type="submit"]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Secondary: quiet surface button */
+button.secondary,
+input[type="submit"].secondary,
+input[type="button"].secondary,
+input[type="reset"].secondary {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+button.secondary:hover,
+input[type="submit"].secondary:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+/* Contrast: inverse surface button (delete & friends) */
+button.contrast,
+input[type="submit"].contrast,
+input[type="button"].contrast,
+input[type="reset"].contrast {
+  background: var(--color-contrast-bg);
+  border-color: transparent;
+  color: var(--color-contrast-on);
+}
+
+button.contrast:hover,
+input[type="submit"].contrast:hover {
+  background: var(--color-text-secondary);
+}
+
+/* Compact variant */
+button.small,
+input[type="submit"].small {
+  padding: 0.2em 0.5em;
+  font-size: var(--text-base);
+}
+
+button:disabled,
+button[disabled],
+input[type="submit"]:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Busy state (async actions) */
+[aria-busy="true"] {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+button[aria-busy="true"]::before {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: busy-spinner 0.75s linear infinite;
+}
+
+@keyframes busy-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================
+   Forms
+   ============================================ */
+
+label {
+  display: block;
+  margin-bottom: var(--space-sm);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  margin: 0;
+  padding: 0.45em 0.7em;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-md);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 4em;
+}
+
+/* Gap between label text and its control */
+label > input,
+label > select,
+label > textarea {
+  margin-top: 0.3em;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--color-text-muted);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+select {
+  appearance: none;
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 0.6em center;
+  padding-right: 2.2em;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  margin: 0 0.35em 0 0;
+  accent-color: var(--color-primary);
+  vertical-align: middle;
+}
+
+input[type="file"] {
+  padding: 0.35em;
+  background: var(--color-surface);
+}
+
+fieldset {
+  margin: 0 0 var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+legend {
+  padding: 0 var(--space-xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* ============================================
+   Tables
+   ============================================ */
+
+table {
+  width: 100%;
+  margin-bottom: var(--space-md);
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: var(--space-sm) var(--space-xs);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+thead th {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wider);
+}
+
+tbody tr:hover {
+  background: var(--color-surface-hover);
+}
+
+/* ============================================
+   Dialogs
+   Standard dialog: <dialog> (opened modally via useModalDialog)
+   wrapping a single <article> with header / body / footer.
+   ============================================ */
+
+dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  max-width: none;
+}
+
+/* Dimmed backdrop — rendered for modal dialogs (showModal) */
+dialog::backdrop {
+  background: var(--color-overlay);
+}
+
+dialog[open] {
+  display: grid;
+  place-items: center;
+  /* Span the layout viewport so % widths on the article resolve against
+     it — 100vw would include the page scrollbar and cause a horizontal
+     scrollbar on the dialog */
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+dialog article {
+  width: min(90%, 560px);
+  padding: var(--space-lg);
+  animation: dialog-in var(--transition-fast);
+}
+
+/* Header/footer bleed to the dialog edges (article padding is --space-lg here);
+   the header keeps a larger inline-start padding for the title but a smaller
+   one at the end so the close button sits closer to the dialog edge */
+dialog article > header {
+  margin: calc(var(--space-lg) * -1) calc(var(--space-lg) * -1) var(--space-md);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-lg);
+}
+
+dialog article > footer {
+  margin: var(--space-md) calc(var(--space-lg) * -1) calc(var(--space-lg) * -1);
+  padding: var(--space-sm) var(--space-lg);
+}
+
+/* Dialog body grid: header / content / footer */
+dialog article {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--space-md);
+}
+
+dialog article > header {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+dialog article section {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+dialog kbd {
+  font-size: var(--text-xs);
+  margin-right: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+dialog pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (max-width: 576px) {
+  dialog article {
+    width: 96%;
+  }
+}
+
+/* ============================================
+   Navigation
+   ============================================ */
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav li {
+  margin: 0;
+  padding: 0;
+}
+
+nav a {
+  color: var(--color-text);
+}
+
+nav a:hover {
+  text-decoration: none;
+}
+
+/* Comfortable touch targets on mobile */
+@media (max-width: 767px) {
+  nav a {
+    padding: var(--space-sm) var(--space-xs);
+  }
+}
+
+/* ============================================
+   Details / Summary
+   ============================================ */
+
+summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ============================================
+   Responsiveness
+   ============================================ */
+
+@media (max-width: 867px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 868px) {
+  .show-mobile {
+    display: none !important;
+  }
+}
