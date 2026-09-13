@@ -18,5 +18,6 @@
 - [x] When the session expires (1 hour, no renewal), the user is redirected to the login page
 - [x] Destructive actions (delete project, delete user, delete secret) ask for confirmation
 - [x] Push conflicts (more recent snapshot in the repository) surface a clear error message
+- [x] All dialogs are modal native `<dialog>` elements (showModal): centered with dimmed backdrop; Esc, backdrop click and Cancel/Close buttons dismiss them
 
 Last spec review: 2026-09-13

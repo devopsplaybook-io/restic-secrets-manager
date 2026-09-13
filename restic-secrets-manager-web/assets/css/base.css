@@ -470,7 +470,9 @@ dialog::backdrop {
 
 dialog[open] {
   display: grid;
-  place-items: center;
+  /* "safe" keeps tall dialogs (e.g. the secret editor with many rows)
+     scrollable instead of clipping their top when centered */
+  place-items: safe center;
   /* Span the layout viewport so % widths on the article resolve against
      it — 100vw would include the page scrollbar and cause a horizontal
      scrollbar on the dialog */
