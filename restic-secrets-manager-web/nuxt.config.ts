@@ -9,7 +9,7 @@ export default defineNuxtConfig({
       charset: "utf-16",
       viewport:
         "width=device-width, initial-scale=1, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no",
-      title: "APPLICATION_TITLE",
+      title: "Restic Secrets Manager",
       meta: [
         { name: "description", content: "restic-secrets-manager" },
         { name: "theme-color", content: "#212121" },
@@ -39,9 +39,8 @@ export default defineNuxtConfig({
       clientsClaim: true,
     },
     manifest: {
-      // The APPLICATION_TITLE placeholder is replaced at container startup
-      name: "APPLICATION_TITLE",
-      short_name: "APPLICATION_TITLE",
+      name: "Restic Secrets Manager",
+      short_name: "Restic Secrets Manager",
       lang: "en-US",
       start_url: "/",
       display: "standalone",
