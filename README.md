@@ -46,7 +46,6 @@ Configuration is provided by environment variables (a `config.json` file next to
 | `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`  |                          | OTLP HTTP endpoint for traces                       |
 | `OPENTELEMETRY_COLLECTOR_HTTP_METRICS` |                          | OTLP HTTP endpoint for metrics                      |
 | `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`    |                          | OTLP HTTP endpoint for logs                         |
-| `APPLICATION_TITLE`                    | `Restic Secrets Manager` | PWA title (Docker image entrypoint)                 |
 
 ## Getting started
 

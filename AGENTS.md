@@ -96,7 +96,7 @@ restic-secrets-manager/
 - Multi-stage build: builder stage compiles server + generates web, runtime stage uses `node:26-alpine`
 - Runtime image includes the `restic` binary
 - Single container serves both API and static web files
-- Entrypoint replaces placeholder `APPLICATION_TITLE` in PWA manifest at startup
+- Application title ("Restic Secrets Manager") is hardcoded in `restic-secrets-manager-web/nuxt.config.ts` (browser tab and PWA manifest)
 
 ## CI/CD
 
