@@ -38,9 +38,7 @@ describe("Secret parseFileContent", () => {
   });
 
   it("should reject empty keys", () => {
-    expect(() => Secret.parseFileContent('{"": "value"}')).toThrow(
-      "empty key",
-    );
+    expect(() => Secret.parseFileContent('{"": "value"}')).toThrow("empty key");
   });
 
   it("should accept an empty object", () => {

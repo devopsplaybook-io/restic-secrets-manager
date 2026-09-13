@@ -5,11 +5,24 @@ import {
 import { FastifyInstance } from "fastify";
 import { Project } from "../model/Project";
 import { OTelRequestSpan } from "../OTelContext";
-import { ProjectsDataGet, ProjectsDataGetByName, ProjectsDataAdd, ProjectsDataDelete, ProjectsDataList } from "./ProjectsData";
+import {
+  ProjectsDataGet,
+  ProjectsDataGetByName,
+  ProjectsDataAdd,
+  ProjectsDataDelete,
+  ProjectsDataList,
+} from "./ProjectsData";
 import { ProjectScopesAdd, ProjectScopesRemove } from "./ProjectScopes";
-import { SecretsDataCountForProject, SecretsDataDeleteByProjectId } from "../secrets/SecretsData";
+import {
+  SecretsDataCountForProject,
+  SecretsDataDeleteByProjectId,
+} from "../secrets/SecretsData";
 import { ProjectAccessCanAccess } from "../users/ProjectAccess";
-import { ResticSyncError, ResticSyncPull, ResticSyncPush } from "../restic/SyncService";
+import {
+  ResticSyncError,
+  ResticSyncPull,
+  ResticSyncPush,
+} from "../restic/SyncService";
 import { Config } from "../Config";
 
 export class ProjectsRoutes {
@@ -53,8 +66,12 @@ export class ProjectsRoutes {
       if (errors.length > 0) {
         return res.status(400).send({ error: errors.join(" ") });
       }
-      if (await ProjectsDataGetByName(OTelRequestSpan(req), body.name as string)) {
-        return res.status(409).send({ error: "A project with this name already exists" });
+      if (
+        await ProjectsDataGetByName(OTelRequestSpan(req), body.name as string)
+      ) {
+        return res
+          .status(409)
+          .send({ error: "A project with this name already exists" });
       }
       const project = Project.fromJson(body) as Project;
       await ProjectsDataAdd(OTelRequestSpan(req), project);
@@ -68,7 +85,10 @@ export class ProjectsRoutes {
       if (!userSession.isAuthenticated) {
         return res.status(403).send({ error: "Access Denied" });
       }
-      const project = await ProjectsDataGet(OTelRequestSpan(req), req.params.id);
+      const project = await ProjectsDataGet(
+        OTelRequestSpan(req),
+        req.params.id,
+      );
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }

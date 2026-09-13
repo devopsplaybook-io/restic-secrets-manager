@@ -49,7 +49,10 @@ export async function ResticSyncPull(
   dataApi: any = DataApi,
 ): Promise<PullResult> {
   const client = new ResticClient(project);
-  const workDir = path.join(config.TMP_DIR, `restic-secrets-manager-${uuidv4()}`);
+  const workDir = path.join(
+    config.TMP_DIR,
+    `restic-secrets-manager-${uuidv4()}`,
+  );
   const restoreDir = path.join(workDir, "restore");
   try {
     await fse.ensureDir(restoreDir);
@@ -148,12 +151,18 @@ export async function ResticSyncPush(
   dataApi: any = DataApi,
 ): Promise<PushResult> {
   const client = new ResticClient(project);
-  const workDir = path.join(config.TMP_DIR, `restic-secrets-manager-${uuidv4()}`);
+  const workDir = path.join(
+    config.TMP_DIR,
+    `restic-secrets-manager-${uuidv4()}`,
+  );
   const secretsDir = path.join(workDir, "secrets");
   try {
     await fse.ensureDir(secretsDir);
 
-    const secrets = await dataApi.SecretsDataListForProject(context, project.id);
+    const secrets = await dataApi.SecretsDataListForProject(
+      context,
+      project.id,
+    );
     for (const secret of secrets) {
       const filePath = path.join(secretsDir, `${secret.name}.json`);
       await fse.writeJson(filePath, secret.data, { spaces: 2 });

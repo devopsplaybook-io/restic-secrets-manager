@@ -30,9 +30,7 @@ export async function ProjectsDataGetByName(
   return Project.fromJson(projectsRaw[0]);
 }
 
-export async function ProjectsDataList(
-  context?: Span,
-): Promise<Project[]> {
+export async function ProjectsDataList(context?: Span): Promise<Project[]> {
   const projectsRaw = await DbUtilsQuerySQL(context, SQL_QUERIES.LIST_PROJECTS);
   const projects: Project[] = [];
   for (const projectRaw of projectsRaw) {
@@ -92,7 +90,7 @@ export async function ProjectsDataUpdateSyncState(
 const SQL_QUERIES = {
   GET_PROJECT: 'SELECT * FROM projects WHERE "id" = ?',
   GET_PROJECT_BY_NAME: 'SELECT * FROM projects WHERE "name" = ?',
-  LIST_PROJECTS: "SELECT * FROM projects ORDER BY \"name\"",
+  LIST_PROJECTS: 'SELECT * FROM projects ORDER BY "name"',
   INSERT_PROJECT:
     'INSERT INTO projects ("id", "name", "description", "s3Endpoint", "s3Bucket", "repoPrefix", "s3Region", "s3BucketLookup", "s3AccessKeyId", "s3SecretAccessKey", "resticPassword", "dateCreated") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   DELETE_PROJECT: 'DELETE FROM projects WHERE "id" = ?',

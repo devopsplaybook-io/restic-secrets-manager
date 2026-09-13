@@ -32,7 +32,9 @@ describe("ensureNoNewerSnapshot", () => {
       id: "snapshot-1",
       time: "2026-01-01T10:00:00Z",
     };
-    expect(() => ensureNoNewerSnapshot(makeProject(), repoLatest)).not.toThrow();
+    expect(() =>
+      ensureNoNewerSnapshot(makeProject(), repoLatest),
+    ).not.toThrow();
   });
 
   it("should reject a push when the project never synchronized", () => {
@@ -40,7 +42,10 @@ describe("ensureNoNewerSnapshot", () => {
       id: "snapshot-1",
       time: "2026-01-01T10:00:00Z",
     };
-    const project = makeProject({ lastSyncSnapshotId: "", lastSyncSnapshotTime: "" });
+    const project = makeProject({
+      lastSyncSnapshotId: "",
+      lastSyncSnapshotTime: "",
+    });
     try {
       ensureNoNewerSnapshot(project, repoLatest);
       throw new Error("should have thrown");
@@ -72,7 +77,10 @@ describe("importPulledSecrets", () => {
     const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}`);
     await fse.ensureDir(dir);
     await fse.writeJson(path.join(dir, "api-keys.json"), { KEY1: "value1" });
-    await fse.writeJson(path.join(dir, "db.json"), { USER: "user", PORT: 5432 });
+    await fse.writeJson(path.join(dir, "db.json"), {
+      USER: "user",
+      PORT: 5432,
+    });
     await fse.writeFile(path.join(dir, "ignored.txt"), "not json");
 
     let replaced: Secret[] | null = null;

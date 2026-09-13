@@ -19,14 +19,19 @@ export class SecretsRoutes {
   //
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
     //
-    fastify.get<{ Params: { id: string } }>("/:id/secrets", async (req, res) => {
-      await ProjectAccessEnsure(req, res, req.params.id);
-      const secrets = await SecretsDataListForProject(
-        OTelRequestSpan(req),
-        req.params.id,
-      );
-      return res.status(200).send({ secrets: secrets.map((s) => s.toJson()) });
-    });
+    fastify.get<{ Params: { id: string } }>(
+      "/:id/secrets",
+      async (req, res) => {
+        await ProjectAccessEnsure(req, res, req.params.id);
+        const secrets = await SecretsDataListForProject(
+          OTelRequestSpan(req),
+          req.params.id,
+        );
+        return res
+          .status(200)
+          .send({ secrets: secrets.map((s) => s.toJson()) });
+      },
+    );
 
     //
     fastify.post<{

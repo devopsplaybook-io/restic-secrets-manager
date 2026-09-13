@@ -29,7 +29,11 @@ export function defaultResticRunner(
       (error, stdout, stderr) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const code = error ? (error as any).code || 1 : 0;
-        resolve({ code: code as number, stdout: String(stdout), stderr: String(stderr) });
+        resolve({
+          code: code as number,
+          stdout: String(stdout),
+          stderr: String(stderr),
+        });
       },
     );
   });
@@ -91,10 +95,7 @@ export class ResticClient {
     return args;
   }
 
-  public async run(
-    args: string[],
-    cwd?: string,
-  ): Promise<ResticCommandResult> {
+  public async run(args: string[], cwd?: string): Promise<ResticCommandResult> {
     return this.runner("restic", args, this.env(), cwd);
   }
 
@@ -162,9 +163,13 @@ export class ResticClient {
 
   /** Restore the latest snapshot into the target directory. */
   public async restoreLatest(target: string): Promise<void> {
-    const result = await this.run(
-      [...this.baseArgs(), "restore", "latest", "--target", target],
-    );
+    const result = await this.run([
+      ...this.baseArgs(),
+      "restore",
+      "latest",
+      "--target",
+      target,
+    ]);
     if (result.code !== 0) {
       throw new Error(
         `Unable to pull secrets from the restic repository: ${sanitizeResticError(result)}`,
@@ -192,7 +197,9 @@ export function isRepoNotInitialized(result: ResticCommandResult): boolean {
 /** Detects "a repository already exists" during init. */
 export function isRepoAlreadyInitialized(result: ResticCommandResult): boolean {
   const output = `${result.stderr}\n${result.stdout}`.toLowerCase();
-  return output.includes("already initialized") || output.includes("already exists");
+  return (
+    output.includes("already initialized") || output.includes("already exists")
+  );
 }
 
 /**

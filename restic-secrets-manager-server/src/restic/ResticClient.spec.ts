@@ -33,7 +33,9 @@ describe("ResticClient env", () => {
     expect(env.AWS_ACCESS_KEY_ID).toBe("key-id");
     expect(env.AWS_SECRET_ACCESS_KEY).toBe("secret-key");
     expect(env.RESTIC_PASSWORD).toBe("repo-password");
-    expect(env.RESTIC_REPOSITORY).toBe("s3:https://s3.example.com/bucket/prefix");
+    expect(env.RESTIC_REPOSITORY).toBe(
+      "s3:https://s3.example.com/bucket/prefix",
+    );
   });
 });
 

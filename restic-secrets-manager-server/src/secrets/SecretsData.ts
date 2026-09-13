@@ -120,10 +120,12 @@ export async function SecretsDataReplaceForProject(
 // the DbUtils facade converts `?` placeholders for Postgres.
 
 const SQL_QUERIES = {
-  LIST_FOR_PROJECT: 'SELECT * FROM secrets WHERE "projectId" = ? ORDER BY "name"',
+  LIST_FOR_PROJECT:
+    'SELECT * FROM secrets WHERE "projectId" = ? ORDER BY "name"',
   GET_SECRET: 'SELECT * FROM secrets WHERE "id" = ?',
   GET_BY_NAME: 'SELECT * FROM secrets WHERE "projectId" = ? AND "name" = ?',
-  COUNT_FOR_PROJECT: 'SELECT COUNT(*) AS count FROM secrets WHERE "projectId" = ?',
+  COUNT_FOR_PROJECT:
+    'SELECT COUNT(*) AS count FROM secrets WHERE "projectId" = ?',
   INSERT_SECRET:
     'INSERT INTO secrets ("id", "projectId", "name", "data", "dateCreated", "dateUpdated") VALUES (?, ?, ?, ?, ?, ?)',
   UPDATE_DATA:

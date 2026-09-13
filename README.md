@@ -16,11 +16,11 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 
 ## Architecture
 
-| Component | Directory | Technology |
-|---|---|---|
-| `restic-secrets-manager-server` | Fastify REST API, serves the web build and calls the `restic` CLI | TypeScript, Fastify, better-sqlite3 / pg |
-| `restic-secrets-manager-web` | Single-page application | Nuxt (SPA), Pinia, axios |
-| `restic-secrets-manager-proxy` | Development proxy routing `/` to the web dev server and `/api/` to the server | Traefik |
+| Component                       | Directory                                                                     | Technology                               |
+| ------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- |
+| `restic-secrets-manager-server` | Fastify REST API, serves the web build and calls the `restic` CLI             | TypeScript, Fastify, better-sqlite3 / pg |
+| `restic-secrets-manager-web`    | Single-page application                                                       | Nuxt (SPA), Pinia, axios                 |
+| `restic-secrets-manager-proxy`  | Development proxy routing `/` to the web dev server and `/api/` to the server | Traefik                                  |
 
 The `restic` binary must be available on the machine running the server (it is included in the Docker image).
 
@@ -28,25 +28,25 @@ The `restic` binary must be available on the machine running the server (it is i
 
 Configuration is provided by environment variables (a `config.json` file next to the server can also be used):
 
-| Variable | Default | Description |
-|---|---|---|
-| `API_PORT` | `8080` | Server (API + web) port |
-| `JWT_KEY` | random, persisted | JWT signing key — set it explicitly in production |
-| `JWT_VALIDITY_DURATION` | `3600` | Session duration in seconds (1 hour, not renewed) |
-| `CORS_POLICY_ORIGIN` | | CORS allowed origin |
-| `DATA_DIR` | `/data` | Data directory (SQLite database) |
-| `DATABASE_TYPE` | `sqlite` | `sqlite` or `postgres` |
-| `DATABASE_POSTGRES_HOST` | | PostgreSQL host (when `DATABASE_TYPE=postgres`) |
-| `DATABASE_POSTGRES_PORT` | `5432` | PostgreSQL port |
-| `DATABASE_POSTGRES_USER` | | PostgreSQL user |
-| `DATABASE_POSTGRES_PASSWORD` | | PostgreSQL password |
-| `DATABASE_POSTGRES_DATABASE` | | PostgreSQL database |
-| `LOG_LEVEL` | `info` | Log level |
-| `TMP_DIR` | `/tmp` | Directory used for temporary restic working folders |
-| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES` | | OTLP HTTP endpoint for traces |
-| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS` | | OTLP HTTP endpoint for metrics |
-| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS` | | OTLP HTTP endpoint for logs |
-| `APPLICATION_TITLE` | `Restic Secrets Manager` | PWA title (Docker image entrypoint) |
+| Variable                               | Default                  | Description                                         |
+| -------------------------------------- | ------------------------ | --------------------------------------------------- |
+| `API_PORT`                             | `8080`                   | Server (API + web) port                             |
+| `JWT_KEY`                              | random, persisted        | JWT signing key — set it explicitly in production   |
+| `JWT_VALIDITY_DURATION`                | `3600`                   | Session duration in seconds (1 hour, not renewed)   |
+| `CORS_POLICY_ORIGIN`                   |                          | CORS allowed origin                                 |
+| `DATA_DIR`                             | `/data`                  | Data directory (SQLite database)                    |
+| `DATABASE_TYPE`                        | `sqlite`                 | `sqlite` or `postgres`                              |
+| `DATABASE_POSTGRES_HOST`               |                          | PostgreSQL host (when `DATABASE_TYPE=postgres`)     |
+| `DATABASE_POSTGRES_PORT`               | `5432`                   | PostgreSQL port                                     |
+| `DATABASE_POSTGRES_USER`               |                          | PostgreSQL user                                     |
+| `DATABASE_POSTGRES_PASSWORD`           |                          | PostgreSQL password                                 |
+| `DATABASE_POSTGRES_DATABASE`           |                          | PostgreSQL database                                 |
+| `LOG_LEVEL`                            | `info`                   | Log level                                           |
+| `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`  |                          | OTLP HTTP endpoint for traces                       |
+| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS` |                          | OTLP HTTP endpoint for metrics                      |
+| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`    |                          | OTLP HTTP endpoint for logs                         |
+| `APPLICATION_TITLE`                    | `Restic Secrets Manager` | PWA title (Docker image entrypoint)                 |
 
 ## Getting started
 

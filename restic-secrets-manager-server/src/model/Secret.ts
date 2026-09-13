@@ -39,7 +39,11 @@ export class Secret {
   public static parseFileContent(raw: string): SecretData {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parsed: any = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
       throw new Error("Invalid secret file: a JSON object is expected");
     }
     const data: SecretData = {};

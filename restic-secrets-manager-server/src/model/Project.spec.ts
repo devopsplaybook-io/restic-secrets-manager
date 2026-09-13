@@ -34,7 +34,9 @@ describe("Project repositoryUrl", () => {
     project.s3Endpoint = "s3.example.com";
     project.s3Bucket = "bucket";
     project.repoPrefix = "prefix";
-    expect(project.repositoryUrl()).toBe("s3:https://s3.example.com/bucket/prefix");
+    expect(project.repositoryUrl()).toBe(
+      "s3:https://s3.example.com/bucket/prefix",
+    );
   });
 });
 
@@ -83,14 +85,20 @@ describe("Project toTransportJson", () => {
     expect(transport.s3AccessKeyId).toBeUndefined();
     expect(transport.s3SecretAccessKey).toBeUndefined();
     expect(transport.resticPassword).toBeUndefined();
-    expect(transport.repositoryUrl).toBe("s3:https://s3.example.com/bucket/test");
+    expect(transport.repositoryUrl).toBe(
+      "s3:https://s3.example.com/bucket/test",
+    );
     expect(transport.name).toBe("Test");
   });
 });
 
 describe("Project fromJson", () => {
   it("should default optional fields", () => {
-    const project = Project.fromJson({ name: "Test", s3Endpoint: "e", s3Bucket: "b" });
+    const project = Project.fromJson({
+      name: "Test",
+      s3Endpoint: "e",
+      s3Bucket: "b",
+    });
     expect(project?.description).toBe("");
     expect(project?.repoPrefix).toBe("");
     expect(project?.s3Region).toBe("");

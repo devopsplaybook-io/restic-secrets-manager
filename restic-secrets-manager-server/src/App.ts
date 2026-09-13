@@ -15,7 +15,13 @@ import Fastify from "fastify";
 import { watchFile } from "fs-extra";
 import * as path from "path";
 import { Config } from "./Config";
-import { OTelLogger, OTelRequestSpan, OTelSetMeter, OTelSetTracer, OTelTracer } from "./OTelContext";
+import {
+  OTelLogger,
+  OTelRequestSpan,
+  OTelSetMeter,
+  OTelSetTracer,
+  OTelTracer,
+} from "./OTelContext";
 import { ProjectsDataList } from "./projects/ProjectsData";
 import { ProjectsRoutes } from "./projects/ProjectsRoutes";
 import { ProjectScopesSync } from "./projects/ProjectScopes";
