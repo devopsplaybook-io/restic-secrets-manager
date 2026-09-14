@@ -64,7 +64,7 @@
     <dialog v-if="showSecretModal" ref="secret-editor" @click.self="secretModal.close()" @close="onSecretModalClosed">
       <article class="secret-editor">
         <header>
-          <button aria-label="Close" rel="prev" @click="closeSecretModal"/>
+          <button aria-label="Close" class="close-btn" @click="closeSecretModal"><i class="bi bi-x-lg"/></button>
           <h3>
             <i class="bi bi-key"/>
             {{ editingSecret ? `Edit Secret: ${editingSecret.name}` : "Add Secret" }}
@@ -87,14 +87,12 @@
               v-model="row.key"
               type="text"
               placeholder="KEY"
-              :disabled="!!editingSecret"
             >
             <div class="value-input">
               <input
                 v-model="row.value"
                 :type="revealedRows.has(index) ? 'text' : 'password'"
                 placeholder="value"
-                :disabled="!!editingSecret"
               >
               <button
                 type="button"
@@ -109,22 +107,23 @@
               type="button"
               class="icon-btn icon-btn--danger"
               title="Remove"
-              :disabled="!!editingSecret"
               @click="removeRow(index)"
             >
               <i class="bi bi-dash-circle"/>
             </button>
           </div>
-          <div v-if="!editingSecret">
+          <div>
             <button type="button" class="secondary" @click="addRow">
               <i class="bi bi-plus-lg"/> Add Key / Value
             </button>
           </div>
         </fieldset>
 
+        <div v-if="secretError" class="error-message">{{ secretError }}</div>
+
         <footer>
           <button class="secondary" @click="closeSecretModal">Cancel</button>
-          <button :disabled="savingSecret || !!editingSecret" @click="saveSecret">
+          <button :disabled="savingSecret" @click="saveSecret">
             {{ savingSecret ? "Saving…" : "Save" }}
           </button>
         </footer>
@@ -135,7 +134,7 @@
     <dialog v-if="showDeleteConfirm" ref="delete-confirm" @click.self="deleteModal.close()" @close="onDeleteModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="deleteModal.close()"/>
+          <button aria-label="Close" class="close-btn" @click="deleteModal.close()"><i class="bi bi-x-lg"/></button>
           <h3><i class="bi bi-exclamation-triangle-fill"/> Delete Secret</h3>
         </header>
         <p>
@@ -170,6 +169,7 @@ const showSecretModal = secretModal.isOpen;
 const editingSecret = ref(null);
 const savingSecret = ref(false);
 const secretForm = ref({ name: "", rows: [] });
+const secretError = ref("");
 const revealedRows = ref(new Set());
 
 const deleteModal = useModalDialog("delete-confirm");
@@ -218,6 +218,7 @@ function formatTime(iso) {
 function openCreateSecret() {
   editingSecret.value = null;
   secretForm.value = { name: "", rows: [{ key: "", value: "" }] };
+  secretError.value = "";
   revealedRows.value = new Set();
   secretModal.open();
 }
@@ -228,6 +229,7 @@ function openEditSecret(secret) {
     name: secret.name,
     rows: Object.keys(secret.data).map((key) => ({ key, value: secret.data[key] })),
   };
+  secretError.value = "";
   revealedRows.value = new Set();
   secretModal.open();
 }
@@ -261,15 +263,23 @@ function toggleReveal(index) {
 }
 
 async function saveSecret() {
-  savingSecret.value = true;
-  error.value = "";
-  try {
-    const data = {};
-    for (const row of secretForm.value.rows) {
-      if (row.key.trim().length > 0) {
-        data[row.key.trim()] = row.value;
-      }
+  const data = {};
+  const seen = new Set();
+  for (const row of secretForm.value.rows) {
+    const key = row.key.trim();
+    if (key.length === 0) {
+      continue;
     }
+    if (seen.has(key)) {
+      secretError.value = `Duplicate key '${key}': each key must appear only once`;
+      return;
+    }
+    seen.add(key);
+    data[key] = row.value;
+  }
+  savingSecret.value = true;
+  secretError.value = "";
+  try {
     if (editingSecret.value) {
       await api.put(
         `/projects/${route.params.id}/secrets/${editingSecret.value.id}`,
@@ -284,7 +294,7 @@ async function saveSecret() {
     closeSecretModal();
     await loadSecrets();
   } catch (e) {
-    error.value = e.response?.data?.error || "Unable to save the secret";
+    secretError.value = e.response?.data?.error || "Unable to save the secret";
   } finally {
     savingSecret.value = false;
   }

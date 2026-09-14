@@ -8,6 +8,8 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] A secret has a name (used as the JSON file name) and a set of key/value entries
 - [x] Users with project access can create, update and delete secrets
 - [x] Secret values are masked by default in the UI, with a reveal toggle
+- [x] Editing a secret allows updating, adding and removing key/value entries
+- [x] Duplicate keys are rejected with an error when saving a secret
 
 ## Push (backup to restic repository)
 
@@ -23,4 +25,4 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] After a successful pull, the project records the snapshot id and time
 - [x] Pull fails with a clear error when the repository is empty
 
-Last spec review: 2026-09-13
+Last spec review: 2026-09-14
