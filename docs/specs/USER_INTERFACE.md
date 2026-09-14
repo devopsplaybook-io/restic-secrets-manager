@@ -19,6 +19,7 @@
 - [x] Destructive actions (delete project, delete user, delete secret) ask for confirmation
 - [x] Push conflicts (more recent snapshot in the repository) surface a clear error message
 - [x] All dialogs are modal native `<dialog>` elements (showModal): centered with dimmed backdrop; Esc, backdrop click and Cancel/Close buttons dismiss them
+- [x] All dialogs show a visible close (×) icon button in their header
 - [x] Dialog and card titles with long names (e.g. "Edit Secret: <name>") wrap instead of overflowing the dialog/card layout
 
-Last spec review: 2026-09-13
+Last spec review: 2026-09-14
