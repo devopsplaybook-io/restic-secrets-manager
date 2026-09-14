@@ -161,20 +161,27 @@ export class ResticClient {
     }
   }
 
-  /** Restore the latest snapshot into the target directory. */
-  public async restoreLatest(target: string): Promise<void> {
+  /**
+   * Restore the given snapshot (id or "latest") into the target directory.
+   */
+  public async restore(snapshotId: string, target: string): Promise<void> {
     const result = await this.run([
       ...this.baseArgs(),
       "restore",
-      "latest",
+      snapshotId,
       "--target",
       target,
     ]);
     if (result.code !== 0) {
       throw new Error(
-        `Unable to pull secrets from the restic repository: ${sanitizeResticError(result)}`,
+        `Unable to restore secrets from the restic repository: ${sanitizeResticError(result)}`,
       );
     }
+  }
+
+  /** Restore the latest snapshot into the target directory. */
+  public async restoreLatest(target: string): Promise<void> {
+    return this.restore("latest", target);
   }
 }
 

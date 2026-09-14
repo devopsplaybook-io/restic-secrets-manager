@@ -16,12 +16,18 @@ import { ProjectScopesAdd, ProjectScopesRemove } from "./ProjectScopes";
 import {
   SecretsDataCountForProject,
   SecretsDataDeleteByProjectId,
+  SecretsDataListForProject,
 } from "../secrets/SecretsData";
 import { ProjectAccessCanAccess } from "../users/ProjectAccess";
 import {
+  computeHasLocalChanges,
+  ResticSyncDiscardLocalChanges,
   ResticSyncError,
+  ResticSyncListSnapshots,
   ResticSyncPull,
   ResticSyncPush,
+  ResticSyncRestoreSnapshot,
+  ResticSyncStatus,
 } from "../restic/SyncService";
 import { Config } from "../Config";
 
@@ -48,6 +54,10 @@ export class ProjectsRoutes {
           visible.push({
             ...project.toTransportJson(),
             secretCount: await SecretsDataCountForProject(span, project.id),
+            hasLocalChanges: computeHasLocalChanges(
+              project,
+              await SecretsDataListForProject(span, project.id),
+            ),
           });
         }
       }
@@ -103,6 +113,10 @@ export class ProjectsRoutes {
         project: {
           ...project.toTransportJson(),
           secretCount: await SecretsDataCountForProject(span, project.id),
+          hasLocalChanges: computeHasLocalChanges(
+            project,
+            await SecretsDataListForProject(span, project.id),
+          ),
         },
       });
     });
@@ -174,6 +188,119 @@ export class ProjectsRoutes {
       }
       try {
         const result = await ResticSyncPush(span, config, project);
+        return res.status(200).send(result);
+      } catch (e) {
+        return sendSyncError(res, e);
+      }
+    });
+
+    // Synchronization status of a project: local modifications and
+    // remote changes to pull (restic is invoked to check the repository)
+    fastify.get<{ Params: { id: string } }>("/:id/status", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
+      if (!userSession.isAuthenticated) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      const span = OTelRequestSpan(req);
+      const project = await ProjectsDataGet(span, req.params.id);
+      if (!project) {
+        return res.status(404).send({ error: "Project Not Found" });
+      }
+      if (
+        userSession.role !== "admin" &&
+        !(await ProjectAccessCanAccess(userSession, project.id))
+      ) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      try {
+        const result = await ResticSyncStatus(span, project);
+        return res.status(200).send(result);
+      } catch (e) {
+        return sendSyncError(res, e);
+      }
+    });
+
+    // Snapshot history of the project repository, most recent first
+    fastify.get<{ Params: { id: string } }>(
+      "/:id/snapshots",
+      async (req, res) => {
+        const userSession = await AuthGetUserSession(req);
+        if (!userSession.isAuthenticated) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        const span = OTelRequestSpan(req);
+        const project = await ProjectsDataGet(span, req.params.id);
+        if (!project) {
+          return res.status(404).send({ error: "Project Not Found" });
+        }
+        if (
+          userSession.role !== "admin" &&
+          !(await ProjectAccessCanAccess(userSession, project.id))
+        ) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        try {
+          const snapshots = await ResticSyncListSnapshots(project);
+          return res.status(200).send({ snapshots });
+        } catch (e) {
+          return sendSyncError(res, e);
+        }
+      },
+    );
+
+    // Restore an arbitrary snapshot of the history as the project secrets
+    fastify.post<{ Params: { id: string; snapshotId: string } }>(
+      "/:id/snapshots/:snapshotId/restore",
+      async (req, res) => {
+        const userSession = await AuthGetUserSession(req);
+        if (!userSession.isAuthenticated) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        const span = OTelRequestSpan(req);
+        const project = await ProjectsDataGet(span, req.params.id);
+        if (!project) {
+          return res.status(404).send({ error: "Project Not Found" });
+        }
+        if (
+          userSession.role !== "admin" &&
+          !(await ProjectAccessCanAccess(userSession, project.id))
+        ) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        try {
+          const result = await ResticSyncRestoreSnapshot(
+            span,
+            config,
+            project,
+            req.params.snapshotId,
+          );
+          return res.status(200).send(result);
+        } catch (e) {
+          return sendSyncError(res, e);
+        }
+      },
+    );
+
+    // Discard the local modifications that were not pushed: restore the
+    // last synchronized snapshot
+    fastify.post<{ Params: { id: string } }>("/:id/discard", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
+      if (!userSession.isAuthenticated) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      const span = OTelRequestSpan(req);
+      const project = await ProjectsDataGet(span, req.params.id);
+      if (!project) {
+        return res.status(404).send({ error: "Project Not Found" });
+      }
+      if (
+        userSession.role !== "admin" &&
+        !(await ProjectAccessCanAccess(userSession, project.id))
+      ) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      try {
+        const result = await ResticSyncDiscardLocalChanges(span, config, project);
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);

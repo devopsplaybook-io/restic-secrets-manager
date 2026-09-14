@@ -10,6 +10,8 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 - **Secrets** — each secret is a named set of key/value pairs, edited through a dedicated dialog with masked values and reveal toggles. Secret names map to JSON file names in the repository.
 - **Pull** — restores the latest snapshot of the project repository and replaces the project secrets in the application.
 - **Push** — serializes the project secrets and creates a new snapshot. Push is **rejected** when the repository contains a more recent snapshot than the last synchronized one (pull first).
+- **Local changes detection** — projects whose secrets were modified since the last synchronization are flagged on the home page ("local changes not pushed"), and the UI checks each project for remote changes to pull.
+- **Snapshot history** — the home page shows the timeline of the repository snapshots; any snapshot can be restored as the project secrets (with confirmation), and local changes that were not pushed can be discarded by restoring the last synchronized snapshot.
 - **Users and access control** — users authenticate with username/password (JWT). Access is granted per project: regular users see only the projects they are granted access to (none by default), admins see and manage everything.
 - **Short-lived sessions** — sessions last one hour and are never renewed: users simply log in again when the session expires.
 - **PWA** — installable single-page application with dark/light theme.

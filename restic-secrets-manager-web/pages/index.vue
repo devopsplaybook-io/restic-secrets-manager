@@ -25,21 +25,51 @@
           </span>
         </header>
         <p class="text-muted project-description">{{ project.description || "No description" }}</p>
-        <footer>
-          <div class="sync-status">
-            <template v-if="project.lastSyncSnapshotTime">
-              <i class="bi bi-check-circle-fill sync-ok"/>
-              <small>Synced {{ formatTime(project.lastSyncSnapshotTime) }}</small>
+        <footer class="project-card-footer">
+          <div v-if="project.hasLocalChanges || statusOf(project.id)" class="card-badges">
+            <template v-if="project.hasLocalChanges">
+              <span class="badge badge-warn" title="Secrets were modified since the last synchronization">
+                <i class="bi bi-pencil-fill"/> Local changes not pushed
+              </span>
+              <button
+                class="btn-discard"
+                :disabled="discarding === project.id"
+                title="Restore the last synchronized snapshot, losing the local changes"
+                @click="confirmDiscard(project)"
+              >
+                <i class="bi bi-arrow-counterclockwise"/> Discard
+              </button>
             </template>
-            <template v-else>
-              <i class="bi bi-circle sync-none"/>
-              <small>Never synchronized</small>
-            </template>
+            <span v-if="statusOf(project.id) === 'checking'" class="badge badge-muted">
+              <i class="bi bi-arrow-repeat spin"/> Checking remote…
+            </span>
+            <span
+              v-else-if="statusOf(project.id) === 'failed'"
+              class="badge badge-muted"
+              title="The repository could not be checked for remote changes"
+            >
+              <i class="bi bi-exclamation-triangle"/> Remote check failed
+            </span>
+            <span v-else-if="statusOf(project.id)?.needsPull" class="badge badge-info">
+              <i class="bi bi-cloud-download"/> Remote changes available
+            </span>
           </div>
-          <div class="project-meta">
-            <small class="text-muted">
-              {{ project.secretCount }} secret{{ project.secretCount === 1 ? "" : "s" }}
-            </small>
+          <div class="footer-meta">
+            <div class="sync-status">
+              <template v-if="project.lastSyncSnapshotTime">
+                <i class="bi bi-check-circle-fill sync-ok"/>
+                <small>Synced {{ formatTime(project.lastSyncSnapshotTime) }}</small>
+              </template>
+              <template v-else>
+                <i class="bi bi-circle sync-none"/>
+                <small>Never synchronized</small>
+              </template>
+            </div>
+            <div class="project-meta">
+              <small class="text-muted">
+                {{ project.secretCount }} secret{{ project.secretCount === 1 ? "" : "s" }}
+              </small>
+            </div>
           </div>
         </footer>
         <div class="sync-actions">
@@ -48,6 +78,9 @@
           </button>
           <button class="secondary" :disabled="syncing === project.id" @click="pushProject(project)">
             <i class="bi bi-cloud-upload"/> Push
+          </button>
+          <button class="secondary" @click="openHistory(project)">
+            <i class="bi bi-clock-history"/> History
           </button>
           <NuxtLink :to="`/projects/${project.id}`" role="button" class="outline-link">
             <i class="bi bi-key"/> Secrets
@@ -155,6 +188,36 @@
         </footer>
       </article>
     </dialog>
+    <!-- DISCARD CONFIRM MODAL -->
+    <dialog v-if="showDiscardConfirm" ref="discard-confirm" @click.self="discardModal.close()" @close="onDiscardModalClosed">
+      <article>
+        <header>
+          <button aria-label="Close" class="close-btn" @click="discardModal.close()"><i class="bi bi-x-lg"/></button>
+          <h3><i class="bi bi-exclamation-triangle-fill"/> Discard Local Changes</h3>
+        </header>
+        <p>
+          Discard the local modifications of project
+          <strong>{{ discardTarget?.name }}</strong
+          >? The secrets will be restored from the last synchronized snapshot
+          and the local changes that were not pushed will be lost.
+        </p>
+        <p>This action cannot be undone.</p>
+        <footer>
+          <button class="secondary" @click="discardModal.close()">Cancel</button>
+          <button class="contrast" :disabled="discarding" @click="executeDiscard">
+            {{ discarding ? "Discarding…" : "Discard" }}
+          </button>
+        </footer>
+      </article>
+    </dialog>
+
+    <!-- SNAPSHOT HISTORY MODAL -->
+    <SnapshotHistoryModal
+      v-if="historyProject"
+      :project="historyProject"
+      @closed="historyProject = null"
+      @restored="onHistoryRestored"
+    />
   </div>
 </template>
 
@@ -180,6 +243,17 @@ const showSyncModal = syncModal.isOpen;
 const syncing = ref("");
 const syncResult = ref(null);
 
+// Remote snapshot check per project card:
+// "checking" | "failed" | { needsPull, remoteLatestSnapshotTime }
+const statuses = ref({});
+
+const discardModal = useModalDialog("discard-confirm");
+const showDiscardConfirm = discardModal.isOpen;
+const discardTarget = ref(null);
+const discarding = ref("");
+
+const historyProject = ref(null);
+
 const defaultForm = () => ({
   name: "",
   description: "",
@@ -200,6 +274,7 @@ onMounted(async () => {
     return;
   }
   await loadProjects();
+  await checkStatuses();
 });
 
 async function loadProjects() {
@@ -209,6 +284,32 @@ async function loadProjects() {
   } catch (e) {
     error.value = e.response?.data?.error || "Unable to load projects";
   }
+}
+
+function statusOf(id) {
+  return statuses.value[id] || null;
+}
+
+// Ask the server, for each project, whether the repository holds remote
+// changes to pull; each card updates independently as its check completes
+async function checkStatuses() {
+  await Promise.all(
+    projects.value.map(async (project) => {
+      statuses.value = { ...statuses.value, [project.id]: "checking" };
+      try {
+        const res = await api.get(`/projects/${project.id}/status`);
+        statuses.value = {
+          ...statuses.value,
+          [project.id]: {
+            needsPull: res.data.needsPull,
+            remoteLatestSnapshotTime: res.data.remoteLatestSnapshotTime,
+          },
+        };
+      } catch {
+        statuses.value = { ...statuses.value, [project.id]: "failed" };
+      }
+    }),
+  );
 }
 
 function formatTime(iso) {
@@ -296,6 +397,7 @@ async function pullProject(project) {
     };
     syncModal.open();
     await loadProjects();
+    await checkStatuses();
   } catch (e) {
     error.value = e.response?.data?.error || "Pull failed";
   } finally {
@@ -313,6 +415,7 @@ async function pushProject(project) {
     };
     syncModal.open();
     await loadProjects();
+    await checkStatuses();
   } catch (e) {
     if (e.response?.status === 409) {
       syncResult.value = {
@@ -325,6 +428,49 @@ async function pushProject(project) {
   } finally {
     syncing.value = "";
   }
+}
+
+// Discard local changes
+
+function confirmDiscard(project) {
+  discardTarget.value = project;
+  discardModal.open();
+}
+
+function onDiscardModalClosed() {
+  discardModal.onClose();
+  discardTarget.value = null;
+}
+
+async function executeDiscard() {
+  discarding.value = discardTarget.value.id;
+  try {
+    const res = await api.post(`/projects/${discardTarget.value.id}/discard`);
+    discardModal.close();
+    syncResult.value = {
+      message: `Discarded local changes: restored ${res.data.secrets} secret(s) and ${res.data.keys} key(s) from snapshot ${res.data.snapshotId.substring(0, 8)}.`,
+    };
+    syncModal.open();
+    await loadProjects();
+    await checkStatuses();
+  } catch (e) {
+    error.value =
+      e.response?.data?.error || "Unable to discard the local changes";
+    discardModal.close();
+  } finally {
+    discarding.value = "";
+  }
+}
+
+// Snapshot history
+
+function openHistory(project) {
+  historyProject.value = project;
+}
+
+async function onHistoryRestored() {
+  await loadProjects();
+  await checkStatuses();
 }
 </script>
 
@@ -370,8 +516,73 @@ async function pushProject(project) {
 
 .project-card > footer {
   display: grid;
+  gap: var(--space-xs);
+  align-content: start;
+}
+
+.footer-meta {
+  display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
+}
+
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-full);
+  padding: 0.15em 0.7em;
+  width: fit-content;
+}
+
+.badge-warn {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.badge-info {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+.badge-muted {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.btn-discard {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  color: var(--color-danger);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  padding: 0.15em 0.7em;
+  cursor: pointer;
+}
+.btn-discard:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+.btn-discard:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spin {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sync-status {
@@ -390,7 +601,7 @@ async function pushProject(project) {
 
 .sync-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr auto auto;
   gap: var(--space-xs);
 }
 
