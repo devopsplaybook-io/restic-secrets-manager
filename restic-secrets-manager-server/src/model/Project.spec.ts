@@ -71,6 +71,29 @@ describe("Project validateNew", () => {
   });
 });
 
+describe("Project lastSyncContentHash", () => {
+  it("should default to an empty hash", () => {
+    const project = Project.fromJson({
+      name: "Test",
+      s3Endpoint: "e",
+      s3Bucket: "b",
+    });
+    expect(project?.lastSyncContentHash).toBe("");
+  });
+
+  it("should round-trip the content hash in JSON forms", () => {
+    const project = Project.fromJson({
+      name: "Test",
+      s3Endpoint: "e",
+      s3Bucket: "b",
+      lastSyncContentHash: "abc123",
+    }) as Project;
+    expect(project.lastSyncContentHash).toBe("abc123");
+    expect(project.toJson().lastSyncContentHash).toBe("abc123");
+    expect(project.toTransportJson().lastSyncContentHash).toBe("abc123");
+  });
+});
+
 describe("Project toTransportJson", () => {
   it("should never expose sensitive repository settings", () => {
     const project = Project.fromJson({

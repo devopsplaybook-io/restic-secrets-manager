@@ -25,4 +25,20 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] After a successful pull, the project records the snapshot id and time
 - [x] Pull fails with a clear error when the repository is empty
 
+## Local changes detection
+
+- [x] The project records, at every synchronization (push, pull, restore), a hash of the synchronized secrets content
+- [x] A project is reported as having local changes not pushed when its current secrets differ from the last synchronized content
+- [x] A project that was never synchronized and holds at least one secret is reported as having local changes not pushed
+- [x] Projects synchronized before content-hash tracking was introduced report no local changes until the next push or pull records the baseline hash
+
+## Snapshot status and history
+
+- [x] The UI can request, per project, whether the restic repository holds remote changes to pull (a check against the repository snapshots)
+- [x] The UI can list the snapshot history of a project repository (id and time, most recent first)
+- [x] Any snapshot of the history can be restored as the project secrets, after an explicit confirmation
+- [x] Restoring a snapshot replaces the project secrets and records the restored snapshot as the last synchronized state
+- [x] Local changes that were not pushed can be discarded: the last synchronized snapshot is restored, after an explicit confirmation
+- [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
+
 Last spec review: 2026-09-14

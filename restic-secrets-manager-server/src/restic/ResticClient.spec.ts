@@ -167,6 +167,50 @@ describe("ResticClient init", () => {
   });
 });
 
+describe("ResticClient restore", () => {
+  it("should restore the given snapshot into the target directory", async () => {
+    const captured: { args: string[] }[] = [];
+    const runner: ResticRunner = async (_command, args) => {
+      captured.push({ args });
+      return result({ stdout: "restored" });
+    };
+    const client = new ResticClient(makeProject(), runner);
+    await client.restore("abcd1234", "/tmp/restore");
+    expect(captured.length).toBe(1);
+    expect(captured[0].args.slice(-4)).toEqual([
+      "restore",
+      "abcd1234",
+      "--target",
+      "/tmp/restore",
+    ]);
+  });
+
+  it("should delegate restoreLatest to the restore command", async () => {
+    const captured: { args: string[] }[] = [];
+    const runner: ResticRunner = async (_command, args) => {
+      captured.push({ args });
+      return result({ stdout: "restored" });
+    };
+    const client = new ResticClient(makeProject(), runner);
+    await client.restoreLatest("/tmp/restore");
+    expect(captured[0].args.slice(-4)).toEqual([
+      "restore",
+      "latest",
+      "--target",
+      "/tmp/restore",
+    ]);
+  });
+
+  it("should throw a safe error message on failure", async () => {
+    const runner: ResticRunner = async () =>
+      result({ code: 1, stderr: "no snapshot" });
+    const client = new ResticClient(makeProject(), runner);
+    await expect(client.restore("abcd1234", "/tmp/restore")).rejects.toThrow(
+      "Unable to restore secrets from the restic repository: no snapshot",
+    );
+  });
+});
+
 describe("latestSnapshot", () => {
   it("should return null for an empty list", () => {
     expect(latestSnapshot([])).toBeNull();

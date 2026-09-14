@@ -121,7 +121,10 @@
 
         <div v-if="secretError" class="error-message">{{ secretError }}</div>
 
-        <footer>
+        <footer class="dialog-footer">
+          <button class="secondary footer-home" @click="backToHome">
+            <i class="bi bi-house"/> Home
+          </button>
           <button class="secondary" @click="closeSecretModal">Cancel</button>
           <button :disabled="savingSecret" @click="saveSecret">
             {{ savingSecret ? "Saving…" : "Save" }}
@@ -242,6 +245,12 @@ function closeSecretModal() {
 function onSecretModalClosed() {
   secretModal.onClose();
   editingSecret.value = null;
+}
+
+// Leave the secret editor and go back to the home page without saving
+function backToHome() {
+  secretModal.close();
+  router.push("/");
 }
 
 function addRow() {
@@ -370,6 +379,15 @@ async function executeDelete() {
 
 .secret-editor {
   min-width: min(640px, 90vw);
+}
+
+.dialog-footer {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.footer-home {
+  margin-right: auto;
 }
 
 .key-value-row {

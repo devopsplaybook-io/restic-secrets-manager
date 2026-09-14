@@ -69,16 +69,21 @@ export async function ProjectsDataDelete(
   await DbUtilsExecSQL(context, SQL_QUERIES.DELETE_PROJECT, [id]);
 }
 
-/** Records the snapshot synchronized by the last pull or push. */
+/**
+ * Records the snapshot synchronized by the last pull, push or restore,
+ * together with the hash of the synchronized secrets content.
+ */
 export async function ProjectsDataUpdateSyncState(
   context: Span | undefined,
   id: string,
   snapshotId: string,
   snapshotTime: string,
+  contentHash: string,
 ): Promise<void> {
   await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_SYNC_STATE, [
     snapshotId,
     snapshotTime,
+    contentHash,
     id,
   ]);
 }
@@ -95,5 +100,5 @@ const SQL_QUERIES = {
     'INSERT INTO projects ("id", "name", "description", "s3Endpoint", "s3Bucket", "repoPrefix", "s3Region", "s3BucketLookup", "s3AccessKeyId", "s3SecretAccessKey", "resticPassword", "dateCreated") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   DELETE_PROJECT: 'DELETE FROM projects WHERE "id" = ?',
   UPDATE_SYNC_STATE:
-    'UPDATE projects SET "lastSyncSnapshotId" = ?, "lastSyncSnapshotTime" = ? WHERE "id" = ?',
+    'UPDATE projects SET "lastSyncSnapshotId" = ?, "lastSyncSnapshotTime" = ?, "lastSyncContentHash" = ? WHERE "id" = ?',
 };
