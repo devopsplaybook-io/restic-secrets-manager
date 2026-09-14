@@ -63,7 +63,7 @@
     <dialog v-if="showUserModal" ref="user-editor" @click.self="closeUserModal" @close="onUserModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="closeUserModal"/>
+          <button aria-label="Close" class="close-btn" @click="closeUserModal"><i class="bi bi-x-lg"/></button>
           <h3>
             <i :class="editingUser ? 'bi bi-pencil-fill' : 'bi bi-person-plus'"/>
             {{ editingUser ? "Edit User" : "Create User" }}
@@ -123,7 +123,7 @@
     <dialog v-if="showDeleteConfirm" ref="delete-user" @click.self="deleteModal.close()" @close="onDeleteModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="deleteModal.close()"/>
+          <button aria-label="Close" class="close-btn" @click="deleteModal.close()"><i class="bi bi-x-lg"/></button>
           <h3><i class="bi bi-exclamation-triangle-fill"/> Delete User</h3>
         </header>
         <p>

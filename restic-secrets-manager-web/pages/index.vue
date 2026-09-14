@@ -63,7 +63,7 @@
     <dialog v-if="showCreateModal" ref="create-project" @click.self="closeCreateModal" @close="onCreateModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="closeCreateModal"/>
+          <button aria-label="Close" class="close-btn" @click="closeCreateModal"><i class="bi bi-x-lg"/></button>
           <h3><i class="bi bi-plus-lg"/> Create Project</h3>
         </header>
         <label>
@@ -123,7 +123,7 @@
     <dialog v-if="showDeleteConfirm" ref="delete-project" @click.self="deleteModal.close()" @close="onDeleteModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="deleteModal.close()"/>
+          <button aria-label="Close" class="close-btn" @click="deleteModal.close()"><i class="bi bi-x-lg"/></button>
           <h3><i class="bi bi-exclamation-triangle-fill"/> Delete Project</h3>
         </header>
         <p>
@@ -146,7 +146,7 @@
     <dialog v-if="showSyncModal" ref="sync-result" @click.self="closeSyncModal" @close="onSyncModalClosed">
       <article>
         <header>
-          <button aria-label="Close" rel="prev" @click="closeSyncModal"/>
+          <button aria-label="Close" class="close-btn" @click="closeSyncModal"><i class="bi bi-x-lg"/></button>
           <h3><i class="bi bi-arrow-repeat"/> Synchronization Result</h3>
         </header>
         <p>{{ syncResult?.message }}</p>
