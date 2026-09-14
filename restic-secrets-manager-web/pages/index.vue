@@ -204,7 +204,9 @@
         <p>This action cannot be undone.</p>
         <footer>
           <button class="secondary" @click="discardModal.close()">Cancel</button>
-          <button class="contrast" :disabled="discarding" @click="executeDiscard">
+          <!-- :disabled needs a boolean: a raw empty string ("") is truthy for
+               boolean attributes in Vue and would permanently disable the button -->
+          <button class="contrast" :disabled="discarding !== ''" @click="executeDiscard">
             {{ discarding ? "Discarding…" : "Discard" }}
           </button>
         </footer>
