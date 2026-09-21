@@ -102,7 +102,6 @@ export async function ResticSyncPull(
   context: Span,
   config: Config,
   project: Project,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any = DataApi,
 ): Promise<PullResult> {
   const client = new ResticClient(project);
@@ -152,7 +151,6 @@ export async function importPulledSecrets(
   context: Span,
   project: Project,
   dir: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any = DataApi,
 ): Promise<{ secrets: number; keys: number }> {
   const entries = await fse.readdir(dir, { withFileTypes: true });
@@ -199,7 +197,6 @@ export async function ResticSyncPush(
   context: Span,
   config: Config,
   project: Project,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any = DataApi,
 ): Promise<PushResult> {
   const client = new ResticClient(project);
@@ -269,7 +266,6 @@ export async function ResticSyncPush(
 export async function ResticSyncStatus(
   context: Span,
   project: Project,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any = DataApi,
 ): Promise<SyncStatusResult> {
   const client = new ResticClient(project);
@@ -308,7 +304,6 @@ export async function ResticSyncRestoreSnapshot(
   config: Config,
   project: Project,
   snapshotId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any = DataApi,
 ): Promise<RestoreSnapshotResult> {
   const client = new ResticClient(project);
@@ -359,7 +354,6 @@ export async function ResticSyncDiscardLocalChanges(
   context: Span,
   config: Config,
   project: Project,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any = DataApi,
 ): Promise<RestoreSnapshotResult> {
   if (!project.lastSyncSnapshotId) {
@@ -403,7 +397,6 @@ export function ensureNoNewerSnapshot(
 async function recordSyncState(
   context: Span,
   project: Project,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dataApi: any,
   snapshotId: string,
   snapshotTime: string,

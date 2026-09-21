@@ -66,7 +66,6 @@ describe("Project validateNew", () => {
   });
 
   it("should reject non-object payloads", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(Project.validateNew(null as any).length).toBe(1);
   });
 });
@@ -130,7 +129,6 @@ describe("Project fromJson", () => {
   });
 
   it("should return null for missing json", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(Project.fromJson(null as any)).toBeNull();
   });
 

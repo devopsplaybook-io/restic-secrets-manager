@@ -142,7 +142,6 @@ Promise.resolve().then(async () => {
       !request.raw.url.startsWith("/api/") &&
       !path.extname(request.raw.url)
     ) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (reply as any).sendFile("index.html");
     }
     reply.status(404).send({ error: "Not Found" });

@@ -27,7 +27,6 @@ export function defaultResticRunner(
       args,
       { env, cwd, maxBuffer: 50 * 1024 * 1024 },
       (error, stdout, stderr) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const code = error ? (error as any).code || 1 : 0;
         resolve({
           code: code as number,
@@ -42,7 +41,6 @@ export function defaultResticRunner(
 export interface ResticSnapshot {
   id: string;
   time: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 

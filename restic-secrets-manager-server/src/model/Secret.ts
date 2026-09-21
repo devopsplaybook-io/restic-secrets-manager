@@ -43,7 +43,6 @@ export class Secret {
    * are converted to strings; nested objects/arrays are rejected.
    */
   public static parseFileContent(raw: string): SecretData {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parsed: any = JSON.parse(raw);
     if (
       parsed === null ||
@@ -91,7 +90,6 @@ export class Secret {
       return errors;
     }
     for (const key of Object.keys(data as Record<string, unknown>)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const value = (data as any)[key];
       if (
         typeof value === "string" ||
@@ -106,7 +104,6 @@ export class Secret {
   }
 
   /** Coerces scalar values to strings (the storage format of secret data). */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public static normalizeData(data: any): SecretData {
     const result: SecretData = {};
     for (const key of Object.keys(data)) {

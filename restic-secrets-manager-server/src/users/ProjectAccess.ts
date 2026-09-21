@@ -23,7 +23,6 @@ export const ProjectAccessApi = {
 export async function ProjectAccessCanAccess(
   userSession: UserSession,
   projectId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   api: any = ProjectAccessApi,
 ): Promise<boolean> {
   if (!userSession.isAuthenticated || !userSession.userId) {
@@ -45,12 +44,9 @@ export async function ProjectAccessCanAccess(
  * given project. Sends a 403 response and throws otherwise.
  */
 export async function ProjectAccessEnsure(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   req: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   res: any,
   projectId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   api: any = ProjectAccessApi,
 ): Promise<void> {
   const userSession = await api.GetUserSession(req);

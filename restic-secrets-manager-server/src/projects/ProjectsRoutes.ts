@@ -310,7 +310,6 @@ export class ProjectsRoutes {
 }
 
 /** Maps restic synchronization errors to transport responses. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function sendSyncError(res: any, e: unknown) {
   if (e instanceof ResticSyncError) {
     return res.status(e.statusCode).send({ error: e.message });
