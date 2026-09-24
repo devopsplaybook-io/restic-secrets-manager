@@ -8,6 +8,7 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 
 - **Projects** — each project holds the settings of a target restic repository (S3 endpoint, bucket, prefix, region, bucket lookup, credentials and repository password). Projects can be created and deleted, never updated.
 - **Secrets** — each secret is a named set of key/value pairs, edited through a dedicated dialog with masked values and reveal toggles. Secret names map to JSON file names in the repository.
+- **Secret organization** — secrets can be duplicated or renamed, a key/value entry can be copied from one secret to another, and the secret list can be filtered by secret name or key name.
 - **Pull** — restores the latest snapshot of the project repository and replaces the project secrets in the application.
 - **Push** — serializes the project secrets and creates a new snapshot. Push is **rejected** when the repository contains a more recent snapshot than the last synchronized one (pull first).
 - **Local changes detection** — projects whose secrets were modified since the last synchronization are flagged on the home page ("local changes not pushed"), and the UI checks each project for remote changes to pull.

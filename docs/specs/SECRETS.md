@@ -10,6 +10,10 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Secret values are masked by default in the UI, with a reveal toggle
 - [x] Editing a secret allows updating, adding and removing key/value entries
 - [x] Duplicate keys are rejected with an error when saving a secret
+- [x] A secret can be duplicated with all its key/value entries under a new name (prefilled with `<name>-copy`)
+- [x] A secret can be renamed; the new name follows the creation rules and must be unique within the project (validation and conflict errors shown inline)
+- [x] A key/value entry can be copied to another secret of the same project, the target secret and key name being chosen in a dialog (an existing target key is overwritten after an explicit warning)
+- [x] The secret list can be filtered by secret name or by key name (case-insensitive); filtering never hides the keys of an opened secret
 
 ## Push (backup to restic repository)
 
@@ -41,4 +45,4 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Local changes that were not pushed can be discarded: the last synchronized snapshot is restored, after an explicit confirmation
 - [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
 
-Last spec review: 2026-09-14
+Last spec review: 2026-09-24
