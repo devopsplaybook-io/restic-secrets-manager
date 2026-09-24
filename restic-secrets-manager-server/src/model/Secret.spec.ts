@@ -62,6 +62,32 @@ describe("Secret isValidName", () => {
   });
 });
 
+describe("Secret validateName", () => {
+  it("should accept valid names", () => {
+    expect(Secret.validateName("api-keys")).toEqual([]);
+    expect(Secret.validateName("Db.Credentials_2")).toEqual([]);
+  });
+
+  it("should require a name", () => {
+    expect(Secret.validateName("")).toEqual([
+      "Invalid secret: name is required",
+    ]);
+    expect(Secret.validateName(undefined as unknown as string)).toEqual([
+      "Invalid secret: name is required",
+    ]);
+    expect(Secret.validateName("   ")).toEqual([
+      "Invalid secret: name is required",
+    ]);
+  });
+
+  it("should reject unsafe names", () => {
+    const errors = Secret.validateName("with space");
+    expect(errors).toEqual([
+      "Invalid secret: name must start with a letter or digit and only contain letters, digits, '.', '_' or '-'",
+    ]);
+  });
+});
+
 describe("Secret validate", () => {
   it("should require a name", () => {
     expect(Secret.validate("", { KEY: "value" })).toEqual([

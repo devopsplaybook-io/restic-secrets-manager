@@ -86,6 +86,17 @@ export async function SecretsDataUpdateData(
   ]);
 }
 
+export async function SecretsDataUpdateName(
+  context: Span | undefined,
+  secret: Secret,
+): Promise<void> {
+  await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_NAME, [
+    secret.name,
+    new Date().toISOString(),
+    secret.id,
+  ]);
+}
+
 export async function SecretsDataDelete(
   context: Span | undefined,
   id: string,
@@ -130,6 +141,8 @@ const SQL_QUERIES = {
     'INSERT INTO secrets ("id", "projectId", "name", "data", "dateCreated", "dateUpdated") VALUES (?, ?, ?, ?, ?, ?)',
   UPDATE_DATA:
     'UPDATE secrets SET "data" = ?, "dateUpdated" = ? WHERE "id" = ?',
+  UPDATE_NAME:
+    'UPDATE secrets SET "name" = ?, "dateUpdated" = ? WHERE "id" = ?',
   DELETE_SECRET: 'DELETE FROM secrets WHERE "id" = ?',
   DELETE_BY_PROJECT: 'DELETE FROM secrets WHERE "projectId" = ?',
 };

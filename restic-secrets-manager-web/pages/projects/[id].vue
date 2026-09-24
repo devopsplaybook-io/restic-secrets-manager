@@ -12,33 +12,56 @@
 
     <div v-if="error" class="error-message">{{ error }}</div>
 
-    <figure v-if="secrets.length > 0">
-      <table>
-        <thead>
-          <tr>
-            <th>Secret</th>
-            <th>Keys</th>
-            <th>Updated</th>
-            <th class="col-actions">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="secret in secrets" :key="secret.id">
-            <td><i class="bi bi-key"/> {{ secret.name }}</td>
-            <td>{{ Object.keys(secret.data).length }}</td>
-            <td class="text-muted">{{ formatTime(secret.dateUpdated) }}</td>
-            <td class="col-actions">
-              <button class="icon-btn" title="Edit" @click="openEditSecret(secret)">
-                <i class="bi bi-pencil-fill"/>
-              </button>
-              <button class="icon-btn icon-btn--danger" title="Delete" @click="confirmDeleteSecret(secret)">
-                <i class="bi bi-trash3-fill"/>
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </figure>
+    <template v-if="secrets.length > 0">
+      <div class="secrets-filter">
+        <i class="bi bi-search"/>
+        <input
+          v-model="filter"
+          type="text"
+          placeholder="Filter secrets by name or key…"
+          aria-label="Filter secrets by name or key"
+        >
+        <button
+          v-if="filter"
+          type="button"
+          class="icon-btn"
+          title="Clear filter"
+          @click="filter = ''"
+        >
+          <i class="bi bi-x-lg"/>
+        </button>
+      </div>
+      <figure v-if="filteredSecrets.length > 0">
+        <table>
+          <thead>
+            <tr>
+              <th>Secret</th>
+              <th>Keys</th>
+              <th>Updated</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="secret in filteredSecrets" :key="secret.id">
+              <td><i class="bi bi-key"/> {{ secret.name }}</td>
+              <td>{{ Object.keys(secret.data).length }}</td>
+              <td class="text-muted">{{ formatTime(secret.dateUpdated) }}</td>
+              <td class="col-actions">
+                <ActionMenu
+                  :items="secretMenuItems"
+                  :title="`Actions for ${secret.name}`"
+                  @select="onSecretAction(secret, $event)"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </figure>
+      <div v-else class="empty-state">
+        <i class="bi bi-search"/>
+        <p>No secrets match the filter.</p>
+      </div>
+    </template>
     <div v-else class="empty-state">
       <i class="bi bi-key"/>
       <p>No secrets in this project yet.</p>
@@ -103,14 +126,11 @@
                 <i class="bi" :class="revealedRows.has(index) ? 'bi-eye-slash' : 'bi-eye'"/>
               </button>
             </div>
-            <button
-              type="button"
-              class="icon-btn icon-btn--danger"
-              title="Remove"
-              @click="removeRow(index)"
-            >
-              <i class="bi bi-dash-circle"/>
-            </button>
+            <ActionMenu
+              :items="keyMenuItems"
+              :title="`Actions for key ${row.key || index + 1}`"
+              @select="onKeyAction(index, $event)"
+            />
           </div>
           <div>
             <button type="button" class="secondary" @click="addRow">
@@ -154,6 +174,116 @@
         </footer>
       </article>
     </dialog>
+
+    <!-- DUPLICATE SECRET MODAL -->
+    <dialog v-if="showDuplicateModal" ref="duplicate-secret" @click.self="duplicateModal.close()" @close="onDuplicateModalClosed">
+      <article>
+        <header>
+          <button aria-label="Close" class="close-btn" @click="duplicateModal.close()"><i class="bi bi-x-lg"/></button>
+          <h3><i class="bi bi-copy"/> Duplicate Secret</h3>
+        </header>
+        <p>
+          Duplicate secret <strong>{{ duplicateTarget?.name }}</strong> with
+          all its key/value entries.
+        </p>
+        <label>
+          New name
+          <input v-model="duplicateName" type="text" placeholder="e.g. api-keys-copy" required >
+          <small class="text-muted">Letters, digits, '.', '_' and '-' only. It is the JSON file name in the repository.</small>
+        </label>
+        <div v-if="duplicateError" class="error-message">{{ duplicateError }}</div>
+        <footer>
+          <button class="secondary" @click="duplicateModal.close()">Cancel</button>
+          <button :disabled="duplicating" @click="executeDuplicate">
+            {{ duplicating ? "Duplicating…" : "Duplicate" }}
+          </button>
+        </footer>
+      </article>
+    </dialog>
+
+    <!-- RENAME SECRET MODAL -->
+    <dialog v-if="showRenameModal" ref="rename-secret" @click.self="renameModal.close()" @close="onRenameModalClosed">
+      <article>
+        <header>
+          <button aria-label="Close" class="close-btn" @click="renameModal.close()"><i class="bi bi-x-lg"/></button>
+          <h3><i class="bi bi-input-cursor-text"/> Rename Secret</h3>
+        </header>
+        <p>
+          Rename secret <strong>{{ renameTarget?.name }}</strong>.
+        </p>
+        <label>
+          New name
+          <input v-model="renameName" type="text" required >
+          <small class="text-muted">Letters, digits, '.', '_' and '-' only. It is the JSON file name in the repository.</small>
+        </label>
+        <div v-if="renameError" class="error-message">{{ renameError }}</div>
+        <footer>
+          <button class="secondary" @click="renameModal.close()">Cancel</button>
+          <button :disabled="renaming" @click="executeRename">
+            {{ renaming ? "Renaming…" : "Rename" }}
+          </button>
+        </footer>
+      </article>
+    </dialog>
+
+    <!-- COPY KEY MODAL -->
+    <dialog v-if="showCopyKeyModal" ref="copy-key" @click.self="copyKeyModal.close()" @close="onCopyKeyModalClosed">
+      <article>
+        <header>
+          <button aria-label="Close" class="close-btn" @click="copyKeyModal.close()"><i class="bi bi-x-lg"/></button>
+          <h3><i class="bi bi-files"/> Copy Key to Another Secret</h3>
+        </header>
+        <template v-if="copyKeySource">
+          <p>
+            Copy key <strong>{{ copyKeySource.key }}</strong> from secret
+            <strong>{{ editingSecret?.name }}</strong>.
+          </p>
+          <div class="copy-source">
+            <small class="text-muted">Value</small>
+            <span class="mono copy-value">{{ copyRevealed ? copyKeySource.value : "••••••••" }}</span>
+            <button
+              type="button"
+              class="icon-btn"
+              :title="copyRevealed ? 'Hide value' : 'Reveal value'"
+              @click="copyRevealed = !copyRevealed"
+            >
+              <i class="bi" :class="copyRevealed ? 'bi-eye-slash' : 'bi-eye'"/>
+            </button>
+          </div>
+          <template v-if="otherSecrets.length > 0">
+            <label>
+              Target secret
+              <select v-model="copyTargetSecretId">
+                <option v-for="secret in otherSecrets" :key="secret.id" :value="secret.id">
+                  {{ secret.name }}
+                </option>
+              </select>
+            </label>
+            <label>
+              Target key name
+              <input v-model="copyTargetKey" type="text" placeholder="KEY" >
+            </label>
+            <div v-if="copyOverwritesKey" class="warning-message">
+              <i class="bi bi-exclamation-triangle-fill"/> Secret
+              <strong>{{ copyTargetSecret?.name }}</strong> already contains key
+              <strong>{{ copyTargetKey.trim() }}</strong>: its value will be
+              overwritten.
+            </div>
+            <div v-if="copyKeyError" class="error-message">{{ copyKeyError }}</div>
+          </template>
+          <p v-else class="text-muted">
+            This project has no other secret to copy the key to. Create another
+            secret first.
+          </p>
+        </template>
+        <footer>
+          <button class="secondary" @click="copyKeyModal.close()">Cancel</button>
+          <button :disabled="copying || !copyTargetSecretId" @click="executeCopyKey">
+            {{ copying ? "Copying…" : "Copy" }}
+          </button>
+        </footer>
+      </article>
+    </dialog>
   </div>
 </template>
 
@@ -166,6 +296,21 @@ const router = useRouter();
 const project = ref(null);
 const secrets = ref([]);
 const error = ref("");
+
+// The filter only narrows the secret list (by secret name or by any key
+// name); the secret editor always shows every key of the opened secret
+const filter = ref("");
+const filteredSecrets = computed(() => {
+  const term = filter.value.trim().toLowerCase();
+  if (!term) {
+    return secrets.value;
+  }
+  return secrets.value.filter(
+    (secret) =>
+      secret.name.toLowerCase().includes(term) ||
+      Object.keys(secret.data).some((key) => key.toLowerCase().includes(term)),
+  );
+});
 
 const secretModal = useModalDialog("secret-editor");
 const showSecretModal = secretModal.isOpen;
@@ -213,6 +358,40 @@ function formatTime(iso) {
     return new Date(iso).toLocaleString();
   } catch {
     return iso;
+  }
+}
+
+// Row action menus
+
+const secretMenuItems = [
+  { key: "edit", label: "Edit", icon: "bi-pencil-fill" },
+  { key: "duplicate", label: "Duplicate", icon: "bi-copy" },
+  { key: "rename", label: "Rename", icon: "bi-input-cursor-text" },
+  { key: "delete", label: "Delete", icon: "bi-trash3-fill", danger: true },
+];
+
+const keyMenuItems = [
+  { key: "copy", label: "Copy to another secret", icon: "bi-files" },
+  { key: "remove", label: "Remove", icon: "bi-dash-circle", danger: true },
+];
+
+function onSecretAction(secret, action) {
+  if (action === "edit") {
+    openEditSecret(secret);
+  } else if (action === "duplicate") {
+    openDuplicateSecret(secret);
+  } else if (action === "rename") {
+    openRenameSecret(secret);
+  } else if (action === "delete") {
+    confirmDeleteSecret(secret);
+  }
+}
+
+function onKeyAction(index, action) {
+  if (action === "copy") {
+    openCopyKey(index);
+  } else if (action === "remove") {
+    removeRow(index);
   }
 }
 
@@ -336,6 +515,163 @@ async function executeDelete() {
     deleting.value = false;
   }
 }
+
+// Duplicate
+
+const duplicateModal = useModalDialog("duplicate-secret");
+const showDuplicateModal = duplicateModal.isOpen;
+const duplicateTarget = ref(null);
+const duplicateName = ref("");
+const duplicating = ref(false);
+const duplicateError = ref("");
+
+function openDuplicateSecret(secret) {
+  duplicateTarget.value = secret;
+  duplicateName.value = `${secret.name}-copy`;
+  duplicateError.value = "";
+  duplicateModal.open();
+}
+
+function onDuplicateModalClosed() {
+  duplicateModal.onClose();
+  duplicateTarget.value = null;
+}
+
+async function executeDuplicate() {
+  duplicating.value = true;
+  duplicateError.value = "";
+  try {
+    await api.post(`/projects/${route.params.id}/secrets`, {
+      name: duplicateName.value,
+      data: duplicateTarget.value.data,
+    });
+    duplicateModal.close();
+    await loadSecrets();
+  } catch (e) {
+    duplicateError.value =
+      e.response?.data?.error || "Unable to duplicate the secret";
+  } finally {
+    duplicating.value = false;
+  }
+}
+
+// Rename
+
+const renameModal = useModalDialog("rename-secret");
+const showRenameModal = renameModal.isOpen;
+const renameTarget = ref(null);
+const renameName = ref("");
+const renaming = ref(false);
+const renameError = ref("");
+
+function openRenameSecret(secret) {
+  renameTarget.value = secret;
+  renameName.value = secret.name;
+  renameError.value = "";
+  renameModal.open();
+}
+
+function onRenameModalClosed() {
+  renameModal.onClose();
+  renameTarget.value = null;
+}
+
+async function executeRename() {
+  renaming.value = true;
+  renameError.value = "";
+  try {
+    await api.put(
+      `/projects/${route.params.id}/secrets/${renameTarget.value.id}`,
+      { name: renameName.value },
+    );
+    renameModal.close();
+    await loadSecrets();
+  } catch (e) {
+    renameError.value =
+      e.response?.data?.error || "Unable to rename the secret";
+  } finally {
+    renaming.value = false;
+  }
+}
+
+// Copy a key to another secret
+
+const copyKeyModal = useModalDialog("copy-key");
+const showCopyKeyModal = copyKeyModal.isOpen;
+const copyKeySource = ref(null);
+const copyRevealed = ref(false);
+const copyTargetSecretId = ref("");
+const copyTargetKey = ref("");
+const copying = ref(false);
+const copyKeyError = ref("");
+
+const otherSecrets = computed(() =>
+  secrets.value.filter((secret) => secret.id !== editingSecret.value?.id),
+);
+
+const copyTargetSecret = computed(
+  () =>
+    secrets.value.find((secret) => secret.id === copyTargetSecretId.value) ||
+    null,
+);
+
+const copyOverwritesKey = computed(() => {
+  const targetKey = copyTargetKey.value.trim();
+  return (
+    copyTargetSecret.value !== null &&
+    targetKey.length > 0 &&
+    Object.hasOwn(copyTargetSecret.value.data, targetKey)
+  );
+});
+
+function openCopyKey(index) {
+  const row = secretForm.value.rows[index];
+  const key = row.key.trim();
+  if (key.length === 0) {
+    secretError.value = "Enter a key name before copying it to another secret";
+    return;
+  }
+  // The value is the one currently displayed in the editor, so unsaved
+  // edits are copied as well; the source secret is not saved by this action
+  copyKeySource.value = { key, value: row.value };
+  copyTargetSecretId.value =
+    otherSecrets.value.length > 0 ? otherSecrets.value[0].id : "";
+  copyTargetKey.value = key;
+  copyRevealed.value = false;
+  copyKeyError.value = "";
+  copyKeyModal.open();
+}
+
+function onCopyKeyModalClosed() {
+  copyKeyModal.onClose();
+  copyKeySource.value = null;
+}
+
+async function executeCopyKey() {
+  const targetKey = copyTargetKey.value.trim();
+  if (targetKey.length === 0) {
+    copyKeyError.value = "The target key name is required";
+    return;
+  }
+  const target = copyTargetSecret.value;
+  if (!target) {
+    copyKeyError.value = "The target secret could not be found";
+    return;
+  }
+  copying.value = true;
+  copyKeyError.value = "";
+  try {
+    await api.put(`/projects/${route.params.id}/secrets/${target.id}`, {
+      data: { ...target.data, [targetKey]: copyKeySource.value.value },
+    });
+    copyKeyModal.close();
+    await loadSecrets();
+  } catch (e) {
+    copyKeyError.value = e.response?.data?.error || "Unable to copy the key";
+  } finally {
+    copying.value = false;
+  }
+}
 </script>
 
 <style scoped>
@@ -353,6 +689,57 @@ async function executeDelete() {
 .col-actions {
   text-align: right;
   white-space: nowrap;
+}
+
+.secrets-filter {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: 420px;
+  margin-bottom: var(--space-md);
+  padding: 0 0 0 var(--space-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.secrets-filter > i {
+  color: var(--color-text-muted);
+}
+
+.secrets-filter input {
+  border: none;
+  background: none;
+  padding-inline: 0;
+}
+
+.secrets-filter input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.copy-source {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-sm);
+  background: var(--color-code-bg);
+  border-radius: var(--radius-sm);
+}
+
+.copy-value {
+  overflow-wrap: anywhere;
+}
+
+.warning-message {
+  color: var(--color-warning);
+  margin-bottom: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
 }
 
 .settings-card {
@@ -427,11 +814,6 @@ async function executeDelete() {
 .icon-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.icon-btn--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
-  color: var(--color-danger);
 }
 
 fieldset {

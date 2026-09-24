@@ -73,10 +73,10 @@ export class Secret {
   }
 
   /**
-   * Validates a secret name and its data map; returns the list of
-   * validation errors (empty when the payload is valid).
+   * Validates a secret name; returns the list of validation errors
+   * (empty when the name is valid).
    */
-  public static validate(name: string, data: unknown): string[] {
+  public static validateName(name: string): string[] {
     const errors: string[] = [];
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       errors.push("Invalid secret: name is required");
@@ -85,6 +85,15 @@ export class Secret {
         "Invalid secret: name must start with a letter or digit and only contain letters, digits, '.', '_' or '-'",
       );
     }
+    return errors;
+  }
+
+  /**
+   * Validates a secret name and its data map; returns the list of
+   * validation errors (empty when the payload is valid).
+   */
+  public static validate(name: string, data: unknown): string[] {
+    const errors: string[] = Secret.validateName(name);
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
       errors.push("Invalid secret: data must be a JSON object");
       return errors;

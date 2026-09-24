@@ -8,6 +8,7 @@ import {
   SecretsDataGetByName,
   SecretsDataListForProject,
   SecretsDataUpdateData,
+  SecretsDataUpdateName,
 } from "./SecretsData";
 import { ProjectAccessEnsure } from "../users/ProjectAccess";
 
@@ -63,7 +64,7 @@ export class SecretsRoutes {
     //
     fastify.put<{
       Params: { id: string; secretId: string };
-      Body: { data?: SecretData };
+      Body: { name?: string; data?: SecretData };
     }>("/:id/secrets/:secretId", async (req, res) => {
       await ProjectAccessEnsure(req, res, req.params.id);
       const secret = await SecretsDataGet(
@@ -73,12 +74,40 @@ export class SecretsRoutes {
       if (!secret || secret.projectId !== req.params.id) {
         return res.status(404).send({ error: "Secret Not Found" });
       }
-      const errors = Secret.validate(secret.name, req.body?.data);
+      const body = req.body || ({} as Record<string, unknown>);
+      const hasName = body.name !== undefined;
+      const hasData = body.data !== undefined;
+      if (!hasName && !hasData) {
+        return res
+          .status(400)
+          .send({ error: "Invalid secret: name or data is required" });
+      }
+      const newName = hasName ? (body.name as string) || "" : secret.name;
+      const errors = Secret.validate(
+        newName,
+        hasData ? body.data : secret.data,
+      );
       if (errors.length > 0) {
         return res.status(400).send({ error: errors.join(" ") });
       }
-      secret.data = Secret.normalizeData(req.body?.data);
-      await SecretsDataUpdateData(OTelRequestSpan(req), secret);
+      if (newName !== secret.name) {
+        const existing = await SecretsDataGetByName(
+          OTelRequestSpan(req),
+          req.params.id,
+          newName,
+        );
+        if (existing && existing.id !== secret.id) {
+          return res
+            .status(409)
+            .send({ error: "A secret with this name already exists" });
+        }
+        secret.name = newName;
+        await SecretsDataUpdateName(OTelRequestSpan(req), secret);
+      }
+      if (hasData) {
+        secret.data = Secret.normalizeData(body.data);
+        await SecretsDataUpdateData(OTelRequestSpan(req), secret);
+      }
       return res.status(200).send({ secret: secret.toJson() });
     });
 

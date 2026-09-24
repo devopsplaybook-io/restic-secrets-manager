@@ -35,8 +35,16 @@
 - [x] Each timeline entry offers a Restore action, confirmed before the snapshot replaces the project secrets
 - [x] The result of a restore is displayed in the history dialog and the project cards are refreshed
 
+## Project detail (secrets)
+
+- [x] A filter field above the secrets table narrows the list by secret name or key name (case-insensitive substring); a "No secrets match the filter." state is shown when nothing matches and opening a filtered secret still shows all its keys
+- [x] Each secret row has a "..." action menu (Edit, Duplicate, Rename, Delete) replacing the former inline buttons
+- [x] The Duplicate and Rename dialogs prefill `<name>-copy` and the current name respectively, and show validation and duplicate-name errors inline
+
 ## Secret editor
 
 - [x] The secret editor dialog offers a Home button to go back to the home page without saving (same behavior as Cancel)
+- [x] Each key row has a "..." action menu (Copy to another secret, Remove) replacing the former inline remove button; the reveal toggle stays
+- [x] The Copy Key dialog shows the source key and its masked value (with reveal), lists the project's other secrets as targets, prefills the target key name with the source key and warns when the target already holds that key
 
-Last spec review: 2026-09-14
+Last spec review: 2026-09-24
