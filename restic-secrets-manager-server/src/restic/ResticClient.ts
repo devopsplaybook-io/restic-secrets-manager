@@ -2,7 +2,8 @@ import * as childProcess from "child_process";
 import { Project } from "../model/Project";
 
 export interface ResticCommandResult {
-  code: number;
+  // number for an exit code, string for a spawn error code (e.g. "ENOENT")
+  code: number | string;
   stdout: string;
   stderr: string;
 }
@@ -27,9 +28,9 @@ export function defaultResticRunner(
       args,
       { env, cwd, maxBuffer: 50 * 1024 * 1024 },
       (error, stdout, stderr) => {
-        const code = error ? (error as any).code || 1 : 0;
+        const code = error ? (error as any).code ?? 1 : 0;
         resolve({
-          code: code as number,
+          code,
           stdout: String(stdout),
           stderr: String(stderr),
         });

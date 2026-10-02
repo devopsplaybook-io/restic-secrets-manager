@@ -7,15 +7,18 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
-    "test": "echo TODO"
+    "test": "vitest run --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@nuxt/eslint-config": "^1.17.0",
     "@vite-pwa/nuxt": "^1.1.1",
+    "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.11.0",
+    "happy-dom": "^20.14.5",
     "nuxt": "^4.5.2",
-    "typescript-eslint": "^8.71.0"
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
   },
   "dependencies": {
     "@pinia/nuxt": "^1.0.2",

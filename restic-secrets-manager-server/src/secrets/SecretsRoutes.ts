@@ -26,8 +26,8 @@ export class SecretsRoutes {
       "/:id/secrets",
       async (req, res) => {
         if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
-        return;
-      }
+          return;
+        }
         const secrets = await SecretsDataListForProject(
           OTelRequestSpan(req),
           req.params.id,
@@ -144,8 +144,8 @@ export class SecretsRoutes {
       "/:id/secrets/:secretId",
       async (req, res) => {
         if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
-        return;
-      }
+          return;
+        }
         const secret = await SecretsDataGet(
           OTelRequestSpan(req),
           req.params.secretId,
