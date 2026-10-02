@@ -19,8 +19,8 @@ import {
   SecretsDataListForProject,
 } from "../secrets/SecretsData";
 import { ProjectAccessCanAccess } from "../users/ProjectAccess";
+import { computeHasLocalChanges } from "../secrets/SecretsHash";
 import {
-  computeHasLocalChanges,
   ResticSyncDiscardLocalChanges,
   ResticSyncError,
   ResticSyncListSnapshots,

@@ -99,6 +99,10 @@ export class Secret {
       return errors;
     }
     for (const key of Object.keys(data as Record<string, unknown>)) {
+      if (!key) {
+        errors.push("Invalid secret: empty key is not allowed");
+        continue;
+      }
       const value = (data as any)[key];
       if (
         typeof value === "string" ||

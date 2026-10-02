@@ -1,12 +1,18 @@
 import { Span } from "@opentelemetry/sdk-trace-base";
-import * as crypto from "crypto";
 import * as fse from "fs-extra";
 import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";
-import { ProjectsDataUpdateSyncState } from "../projects/ProjectsData";
+import {
+  ProjectsDataGet,
+  ProjectsDataUpdateSyncState,
+} from "../projects/ProjectsData";
+import {
+  computeHasLocalChanges,
+  computeSecretsHash,
+} from "../secrets/SecretsHash";
 import {
   SecretsDataListForProject,
   SecretsDataReplaceForProject,
@@ -17,6 +23,7 @@ import {
   ResticClient,
   ResticSnapshot,
 } from "./ResticClient";
+import { SyncLocksRun } from "./SyncLocks";
 
 export interface PullResult {
   snapshotId: string;
@@ -60,43 +67,8 @@ export class ResticSyncError extends Error {
 }
 
 /**
- * SHA-256 of a canonical serialization of the project secrets (sorted by
- * name): the baseline recorded at every synchronization to detect local
- * modifications that have not been pushed yet.
- */
-export function computeSecretsHash(secrets: Secret[]): string {
-  const canonical = secrets
-    .map((secret) => ({ name: secret.name, data: secret.data }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(canonical))
-    .digest("hex");
-}
-
-/**
- * True when the project secrets differ from the content of the last
- * synchronized snapshot. Projects that were never synchronized have local
- * changes as soon as they hold at least one secret. Projects synchronized
- * before content-hash tracking (no stored hash) are assumed clean until
- * the next push or pull records the baseline hash.
- */
-export function computeHasLocalChanges(
-  project: Project,
-  secrets: Secret[],
-): boolean {
-  if (!project.lastSyncSnapshotId) {
-    return secrets.length > 0;
-  }
-  if (!project.lastSyncContentHash) {
-    return false;
-  }
-  return project.lastSyncContentHash !== computeSecretsHash(secrets);
-}
-
-/**
  * Pull (restore) the latest snapshot of the project repository and replace
- * the project secrets with its content.
+ * the project secrets with its content. Serialized per project.
  */
 export async function ResticSyncPull(
   context: Span,
@@ -104,6 +76,20 @@ export async function ResticSyncPull(
   project: Project,
   dataApi: any = DataApi,
 ): Promise<PullResult> {
+  return SyncLocksRun(project.id, () =>
+    resticSyncPullUnlocked(context, config, project, dataApi),
+  );
+}
+
+async function resticSyncPullUnlocked(
+  context: Span,
+  config: Config,
+  project: Project,
+  dataApi: any,
+): Promise<PullResult> {
+  // Re-read the project under the lock: a queued sync may have moved the
+  // last synchronized state while this operation was waiting.
+  project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(project);
   const workDir = path.join(
     config.TMP_DIR,
@@ -184,6 +170,12 @@ export async function importPulledSecrets(
     secrets.push(secret);
     keys += Object.keys(data).length;
   }
+  if (secrets.length === 0 && entries.some((entry) => entry.isFile())) {
+    throw new ResticSyncError(
+      "No JSON secret file found in the snapshot (files were present but ignored): refusing to replace the project secrets",
+      422,
+    );
+  }
   await dataApi.SecretsDataReplaceForProject(context, project.id, secrets);
   return { secrets: secrets.length, keys };
 }
@@ -191,7 +183,8 @@ export async function importPulledSecrets(
 /**
  * Push (backup) the project secrets to the repository.
  * Rejected with 409 when the repository contains a more recent snapshot
- * than the last one synchronized by this project.
+ * than the last one synchronized by this project. Serialized per project
+ * and re-checked against the fresh project state under the lock.
  */
 export async function ResticSyncPush(
   context: Span,
@@ -199,6 +192,20 @@ export async function ResticSyncPush(
   project: Project,
   dataApi: any = DataApi,
 ): Promise<PushResult> {
+  return SyncLocksRun(project.id, () =>
+    resticSyncPushUnlocked(context, config, project, dataApi),
+  );
+}
+
+async function resticSyncPushUnlocked(
+  context: Span,
+  config: Config,
+  project: Project,
+  dataApi: any,
+): Promise<PushResult> {
+  // Re-read the project under the lock: a queued sync may have moved the
+  // last synchronized state while this operation was waiting.
+  project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(project);
   const workDir = path.join(
     config.TMP_DIR,
@@ -297,7 +304,7 @@ export async function ResticSyncListSnapshots(
 /**
  * Restore an arbitrary snapshot of the history and replace the project
  * secrets with its content. The restored snapshot becomes the last
- * synchronized state.
+ * synchronized state. Serialized per project.
  */
 export async function ResticSyncRestoreSnapshot(
   context: Span,
@@ -306,6 +313,27 @@ export async function ResticSyncRestoreSnapshot(
   snapshotId: string,
   dataApi: any = DataApi,
 ): Promise<RestoreSnapshotResult> {
+  return SyncLocksRun(project.id, () =>
+    resticSyncRestoreSnapshotUnlocked(
+      context,
+      config,
+      project,
+      snapshotId,
+      dataApi,
+    ),
+  );
+}
+
+async function resticSyncRestoreSnapshotUnlocked(
+  context: Span,
+  config: Config,
+  project: Project,
+  snapshotId: string,
+  dataApi: any,
+): Promise<RestoreSnapshotResult> {
+  // Re-read the project under the lock: a queued sync may have moved the
+  // last synchronized state while this operation was waiting.
+  project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(project);
   const workDir = path.join(
     config.TMP_DIR,
@@ -348,7 +376,7 @@ export async function ResticSyncRestoreSnapshot(
 /**
  * Discard the local modifications that were not pushed: restore the last
  * synchronized snapshot. Rejected with 409 when the project was never
- * synchronized (there is nothing to restore).
+ * synchronized (there is nothing to restore). Serialized per project.
  */
 export async function ResticSyncDiscardLocalChanges(
   context: Span,
@@ -356,13 +384,27 @@ export async function ResticSyncDiscardLocalChanges(
   project: Project,
   dataApi: any = DataApi,
 ): Promise<RestoreSnapshotResult> {
+  return SyncLocksRun(project.id, () =>
+    resticSyncDiscardLocalChangesUnlocked(context, config, project, dataApi),
+  );
+}
+
+async function resticSyncDiscardLocalChangesUnlocked(
+  context: Span,
+  config: Config,
+  project: Project,
+  dataApi: any,
+): Promise<RestoreSnapshotResult> {
+  // Re-read the project under the lock: a queued sync may have moved the
+  // last synchronized state while this operation was waiting.
+  project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   if (!project.lastSyncSnapshotId) {
     throw new ResticSyncError(
       "Project was never synchronized: there are no local changes to discard",
       409,
     );
   }
-  return ResticSyncRestoreSnapshot(
+  return resticSyncRestoreSnapshotUnlocked(
     context,
     config,
     project,
@@ -413,6 +455,7 @@ async function recordSyncState(
 
 /** Indirection point over the data layer so tests can stub it. */
 export const DataApi = {
+  ProjectsDataGet,
   ProjectsDataUpdateSyncState,
   SecretsDataListForProject,
   SecretsDataReplaceForProject,

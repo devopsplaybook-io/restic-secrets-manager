@@ -1,3 +1,4 @@
+import { isUniqueViolationError } from "@devopsplaybook.io/common-utils";
 import { FastifyInstance } from "fastify";
 import { Secret, SecretData } from "../model/Secret";
 import { OTelRequestSpan } from "../OTelContext";
@@ -57,7 +58,16 @@ export class SecretsRoutes {
       secret.projectId = req.params.id;
       secret.name = name;
       secret.data = Secret.normalizeData(body.data);
-      await SecretsDataAdd(OTelRequestSpan(req), secret);
+      try {
+        await SecretsDataAdd(OTelRequestSpan(req), secret);
+      } catch (e) {
+        if (isUniqueViolationError(e)) {
+          return res
+            .status(409)
+            .send({ error: "A secret with this name already exists" });
+        }
+        throw e;
+      }
       return res.status(201).send({ secret: secret.toJson() });
     });
 
@@ -102,7 +112,16 @@ export class SecretsRoutes {
             .send({ error: "A secret with this name already exists" });
         }
         secret.name = newName;
-        await SecretsDataUpdateName(OTelRequestSpan(req), secret);
+        try {
+          await SecretsDataUpdateName(OTelRequestSpan(req), secret);
+        } catch (e) {
+          if (isUniqueViolationError(e)) {
+            return res
+              .status(409)
+              .send({ error: "A secret with this name already exists" });
+          }
+          throw e;
+        }
       }
       if (hasData) {
         secret.data = Secret.normalizeData(body.data);

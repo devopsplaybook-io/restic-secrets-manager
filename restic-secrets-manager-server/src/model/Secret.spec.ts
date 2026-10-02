@@ -116,6 +116,12 @@ describe("Secret validate", () => {
     ]);
   });
 
+  it("should reject an empty key (rejected by pull import)", () => {
+    expect(Secret.validate("name", { "": "value" })).toEqual([
+      "Invalid secret: empty key is not allowed",
+    ]);
+  });
+
   it("should accept a valid secret", () => {
     expect(Secret.validate("name", { KEY: "value" })).toEqual([]);
   });

@@ -1,5 +1,11 @@
 import { Span } from "@opentelemetry/sdk-trace-base";
-import { DbUtilsExecSQL, DbUtilsQuerySQL } from "../utils-std-ts/DbUtils";
+import {
+  convertToPostgresPlaceholders,
+  DbUtilsExecSQL,
+  DbUtilsGetDatabase,
+  DbUtilsGetType,
+  DbUtilsQuerySQL,
+} from "../utils-std-ts/DbUtils";
 import { Secret } from "../model/Secret";
 
 export async function SecretsDataListForProject(
@@ -113,17 +119,60 @@ export async function SecretsDataDeleteByProjectId(
 
 /**
  * Replaces all the secrets of a project with the provided list
- * (used when pulling from the restic repository).
+ * (used when pulling from the restic repository). The delete and the
+ * inserts run in a single transaction: a failure leaves the previous
+ * secret set untouched.
  */
 export async function SecretsDataReplaceForProject(
   context: Span | undefined,
   projectId: string,
   secrets: Secret[],
 ): Promise<void> {
-  await SecretsDataDeleteByProjectId(context, projectId);
-  for (const secret of secrets) {
-    await SecretsDataAdd(context, secret);
+  if (DbUtilsGetType() === "sqlite") {
+    // better-sqlite3 executes synchronously: do not await inside the
+    // transaction callback or it would commit before the statements run.
+    const db = DbUtilsGetDatabase();
+    const apply = db.transaction(() => {
+      DbUtilsExecSQL(context, SQL_QUERIES.DELETE_BY_PROJECT, [projectId]);
+      for (const secret of secrets) {
+        DbUtilsExecSQL(context, SQL_QUERIES.INSERT_SECRET, insertParams(secret));
+      }
+    });
+    apply();
+    return;
   }
+  const pool = DbUtilsGetDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      convertToPostgresPlaceholders(SQL_QUERIES.DELETE_BY_PROJECT),
+      [projectId],
+    );
+    for (const secret of secrets) {
+      await client.query(
+        convertToPostgresPlaceholders(SQL_QUERIES.INSERT_SECRET),
+        insertParams(secret),
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+function insertParams(secret: Secret): unknown[] {
+  return [
+    secret.id,
+    secret.projectId,
+    secret.name,
+    JSON.stringify(secret.data),
+    secret.dateCreated,
+    secret.dateUpdated,
+  ];
 }
 
 // SQL
