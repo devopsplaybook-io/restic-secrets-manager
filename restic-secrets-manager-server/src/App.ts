@@ -2,10 +2,8 @@ import { StandardMeter, StandardTracer } from "@devopsplaybook.io/otel-utils";
 import { StandardTracerFastifyRegisterHooks } from "@devopsplaybook.io/otel-utils-fastify";
 import {
   AuthInit,
-  AuthSetOTel,
   User,
   UsersDataList,
-  UsersDataSetOTel,
   UsersRoutes,
 } from "@devopsplaybook.io/common-utils";
 import fastifyCompress from "@fastify/compress";
@@ -26,6 +24,7 @@ import { ProjectsDataList } from "./projects/ProjectsData";
 import { ProjectsRoutes } from "./projects/ProjectsRoutes";
 import { ProjectScopesSync } from "./projects/ProjectScopes";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
+import { AuthWiringSetOTel } from "./users/AuthWiring";
 import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
 
 const logger = OTelLogger().createModuleLogger("app");
@@ -54,8 +53,7 @@ Promise.resolve().then(async () => {
     config,
     path.join(__dirname, `../sql/${config.DATABASE_TYPE}`),
   );
-  AuthSetOTel(OTelTracer());
-  UsersDataSetOTel(OTelTracer());
+  AuthWiringSetOTel(OTelTracer());
 
   // User scopes are the dynamic project access scopes
   await ProjectScopesSync();
