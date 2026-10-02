@@ -71,7 +71,9 @@ export async function ProjectsDataDelete(
 
 /**
  * Records the snapshot synchronized by the last pull, push or restore,
- * together with the hash of the synchronized secrets content.
+ * together with the hash of the synchronized secrets content. After a
+ * synchronization the baseline hash and the current content hash are the
+ * same, so both columns are written in one statement.
  */
 export async function ProjectsDataUpdateSyncState(
   context: Span | undefined,
@@ -83,6 +85,31 @@ export async function ProjectsDataUpdateSyncState(
   await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_SYNC_STATE, [
     snapshotId,
     snapshotTime,
+    contentHash,
+    contentHash,
+    id,
+  ]);
+}
+
+/** Stores the hash of the current secrets content (after a secret edit). */
+export async function ProjectsDataUpdateCurrentContentHash(
+  context: Span | undefined,
+  id: string,
+  contentHash: string,
+): Promise<void> {
+  await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_CURRENT_CONTENT_HASH, [
+    contentHash,
+    id,
+  ]);
+}
+
+/** Stores the baseline hash (used when normalizing legacy baselines). */
+export async function ProjectsDataUpdateLastSyncContentHash(
+  context: Span | undefined,
+  id: string,
+  contentHash: string,
+): Promise<void> {
+  await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_LAST_SYNC_CONTENT_HASH, [
     contentHash,
     id,
   ]);
@@ -100,5 +127,9 @@ const SQL_QUERIES = {
     'INSERT INTO projects ("id", "name", "description", "s3Endpoint", "s3Bucket", "repoPrefix", "s3Region", "s3BucketLookup", "s3AccessKeyId", "s3SecretAccessKey", "resticPassword", "dateCreated") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   DELETE_PROJECT: 'DELETE FROM projects WHERE "id" = ?',
   UPDATE_SYNC_STATE:
-    'UPDATE projects SET "lastSyncSnapshotId" = ?, "lastSyncSnapshotTime" = ?, "lastSyncContentHash" = ? WHERE "id" = ?',
+    'UPDATE projects SET "lastSyncSnapshotId" = ?, "lastSyncSnapshotTime" = ?, "lastSyncContentHash" = ?, "currentContentHash" = ? WHERE "id" = ?',
+  UPDATE_CURRENT_CONTENT_HASH:
+    'UPDATE projects SET "currentContentHash" = ? WHERE "id" = ?',
+  UPDATE_LAST_SYNC_CONTENT_HASH:
+    'UPDATE projects SET "lastSyncContentHash" = ? WHERE "id" = ?',
 };

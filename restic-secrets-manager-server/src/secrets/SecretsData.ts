@@ -67,6 +67,18 @@ export async function SecretsDataCountForProject(
   return resultRaw.length > 0 ? parseInt(resultRaw[0].count, 10) : 0;
 }
 
+/** Secret counts of every project, in one grouped query. */
+export async function SecretsDataCountsAll(
+  context: Span | undefined,
+): Promise<Map<string, number>> {
+  const rows = await DbUtilsQuerySQL(context, SQL_QUERIES.COUNT_ALL);
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    counts.set(row.projectId, parseInt(row.count, 10));
+  }
+  return counts;
+}
+
 export async function SecretsDataAdd(
   context: Span | undefined,
   secret: Secret,
@@ -186,6 +198,7 @@ const SQL_QUERIES = {
   GET_BY_NAME: 'SELECT * FROM secrets WHERE "projectId" = ? AND "name" = ?',
   COUNT_FOR_PROJECT:
     'SELECT COUNT(*) AS count FROM secrets WHERE "projectId" = ?',
+  COUNT_ALL: 'SELECT "projectId", COUNT(*) AS count FROM secrets GROUP BY "projectId"',
   INSERT_SECRET:
     'INSERT INTO secrets ("id", "projectId", "name", "data", "dateCreated", "dateUpdated") VALUES (?, ?, ?, ?, ?, ?)',
   UPDATE_DATA:

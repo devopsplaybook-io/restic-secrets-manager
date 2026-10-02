@@ -21,6 +21,7 @@ import {
 } from "./OTelContext";
 import { ProjectsRoutes } from "./projects/ProjectsRoutes";
 import { ProjectScopesSync } from "./projects/ProjectScopes";
+import { SecretsHashBackfillAll } from "./secrets/SecretsHash";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
 import { AuthWiringSetOTel } from "./users/AuthWiring";
 import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
@@ -55,6 +56,8 @@ Promise.resolve().then(async () => {
 
   // User scopes are the dynamic project access scopes
   await ProjectScopesSync();
+  // One-time backfill of the stored secrets content hashes (L10 upgrade)
+  await SecretsHashBackfillAll(span);
   await AuthInit(span, config, [...User.ALL_SCOPES]);
 
   span.end();

@@ -412,13 +412,15 @@ describe("ResticSyncStatus", () => {
         { id: "snapshot-2", time: "2026-02-01T10:00:00Z" },
       ]),
     });
-    const secrets = [makeSecret("api", { K1: "v1" })];
     const dataApi = {
-      SecretsDataListForProject: jest.fn().mockResolvedValue(secrets),
+      SecretsDataCountForProject: jest.fn().mockResolvedValue(1),
     };
 
     const project = makeProject();
-    project.lastSyncContentHash = computeSecretsHash(secrets);
+    project.lastSyncContentHash = computeSecretsHash([
+      makeSecret("api", { K1: "v1" }),
+    ]);
+    project.currentContentHash = project.lastSyncContentHash;
     const status = await ResticSyncStatus(span(), project, dataApi);
 
     expect(status.needsPull).toBe(true);
@@ -432,13 +434,15 @@ describe("ResticSyncStatus", () => {
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       ]),
     });
-    const secrets = [makeSecret("api", { K1: "v1" })];
     const dataApi = {
-      SecretsDataListForProject: jest.fn().mockResolvedValue(secrets),
+      SecretsDataCountForProject: jest.fn().mockResolvedValue(1),
     };
 
     const project = makeProject();
-    project.lastSyncContentHash = computeSecretsHash(secrets);
+    project.lastSyncContentHash = computeSecretsHash([
+      makeSecret("api", { K1: "v1" }),
+    ]);
+    project.currentContentHash = project.lastSyncContentHash;
     const status = await ResticSyncStatus(span(), project, dataApi);
 
     expect(status.needsPull).toBe(false);
@@ -452,14 +456,15 @@ describe("ResticSyncStatus", () => {
       ]),
     });
     const dataApi = {
-      SecretsDataListForProject: jest
-        .fn()
-        .mockResolvedValue([makeSecret("api", { K1: "v2" })]),
+      SecretsDataCountForProject: jest.fn().mockResolvedValue(1),
     };
 
     const project = makeProject();
     project.lastSyncContentHash = computeSecretsHash([
       makeSecret("api", { K1: "v1" }),
+    ]);
+    project.currentContentHash = computeSecretsHash([
+      makeSecret("api", { K1: "v2" }),
     ]);
     const status = await ResticSyncStatus(span(), project, dataApi);
 
@@ -470,7 +475,7 @@ describe("ResticSyncStatus", () => {
   it("should report an empty repository as up to date", async () => {
     mockClient();
     const dataApi = {
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      SecretsDataCountForProject: jest.fn().mockResolvedValue(0),
     };
     const status = await ResticSyncStatus(span(), makeProject(), dataApi);
     expect(status.needsPull).toBe(false);

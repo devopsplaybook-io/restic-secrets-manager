@@ -14,6 +14,7 @@ import {
   computeSecretsHash,
 } from "../secrets/SecretsHash";
 import {
+  SecretsDataCountForProject,
   SecretsDataListForProject,
   SecretsDataReplaceForProject,
 } from "../secrets/SecretsData";
@@ -278,9 +279,12 @@ export async function ResticSyncStatus(
   const client = new ResticClient(project);
   const snapshots = await client.snapshots();
   const latest = latestSnapshot(snapshots);
-  const secrets = await dataApi.SecretsDataListForProject(context, project.id);
+  const secretCount = await dataApi.SecretsDataCountForProject(
+    context,
+    project.id,
+  );
   return {
-    hasLocalChanges: computeHasLocalChanges(project, secrets),
+    hasLocalChanges: computeHasLocalChanges(project, secretCount),
     lastSyncSnapshotId: project.lastSyncSnapshotId,
     lastSyncSnapshotTime: project.lastSyncSnapshotTime,
     remoteLatestSnapshotId: latest ? latest.id : "",
@@ -457,6 +461,7 @@ async function recordSyncState(
 export const DataApi = {
   ProjectsDataGet,
   ProjectsDataUpdateSyncState,
+  SecretsDataCountForProject,
   SecretsDataListForProject,
   SecretsDataReplaceForProject,
 };

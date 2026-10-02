@@ -12,6 +12,7 @@ import {
   SecretsDataUpdateName,
 } from "./SecretsData";
 import { ProjectAccessEnsure } from "../users/ProjectAccess";
+import { SecretsHashRefreshForProject } from "./SecretsHash";
 
 /**
  * Secrets routes, registered under the /api/projects prefix.
@@ -72,6 +73,7 @@ export class SecretsRoutes {
         }
         throw e;
       }
+      await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
       return res.status(201).send({ secret: secret.toJson() });
     });
 
@@ -133,6 +135,7 @@ export class SecretsRoutes {
         secret.data = Secret.normalizeData(body.data);
         await SecretsDataUpdateData(OTelRequestSpan(req), secret);
       }
+      await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
       return res.status(200).send({ secret: secret.toJson() });
     });
 
@@ -151,6 +154,7 @@ export class SecretsRoutes {
           return res.status(404).send({ error: "Secret Not Found" });
         }
         await SecretsDataDelete(OTelRequestSpan(req), secret.id);
+        await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
         return res.status(200).send({});
       },
     );

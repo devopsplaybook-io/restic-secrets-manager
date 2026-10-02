@@ -26,6 +26,7 @@ export class Project {
     project.lastSyncSnapshotId = (json.lastSyncSnapshotId as string) || "";
     project.lastSyncSnapshotTime = (json.lastSyncSnapshotTime as string) || "";
     project.lastSyncContentHash = (json.lastSyncContentHash as string) || "";
+    project.currentContentHash = (json.currentContentHash as string) || "";
     // Request bodies carry no dateCreated: keep the constructor-generated
     // timestamp so inserts never receive an undefined value
     if (json.dateCreated) {
@@ -49,6 +50,8 @@ export class Project {
   public lastSyncSnapshotTime = "";
   /** SHA-256 of the project secrets at the last synchronization. */
   public lastSyncContentHash = "";
+  /** SHA-256 of the current project secrets (maintained on every edit). */
+  public currentContentHash = "";
   public dateCreated: string;
 
   constructor() {
@@ -128,6 +131,7 @@ export class Project {
       lastSyncSnapshotId: this.lastSyncSnapshotId,
       lastSyncSnapshotTime: this.lastSyncSnapshotTime,
       lastSyncContentHash: this.lastSyncContentHash,
+      currentContentHash: this.currentContentHash,
       dateCreated: this.dateCreated,
     };
   }

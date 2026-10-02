@@ -40,6 +40,31 @@ export async function ProjectAccessCanAccess(
 }
 
 /**
+ * Returns the ids of the projects the session is allowed to access among
+ * the provided ones, resolving the user record only once (list views).
+ */
+export async function ProjectAccessCanAccessMany(
+  userSession: UserSession,
+  projectIds: string[],
+  api: any = ProjectAccessApi,
+): Promise<Set<string>> {
+  if (!userSession.isAuthenticated || !userSession.userId) {
+    return new Set();
+  }
+  if (userSession.role === "admin") {
+    return new Set(projectIds);
+  }
+  const user = await api.GetUser(userSession.userId);
+  if (!user) {
+    return new Set();
+  }
+  const scopes: string[] = user.scopes || [];
+  return new Set(
+    projectIds.filter((projectId) => scopes.includes(projectScope(projectId))),
+  );
+}
+
+/**
  * Ensures the current request is authenticated AND allowed to access the
  * given project. Sends a 403 response and returns false when access is
  * denied; callers must return without responding again.

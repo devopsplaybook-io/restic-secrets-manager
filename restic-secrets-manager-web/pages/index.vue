@@ -292,26 +292,37 @@ function statusOf(id) {
   return statuses.value[id] || null;
 }
 
-// Ask the server, for each project, whether the repository holds remote
-// changes to pull; each card updates independently as its check completes
+// Ask the server, in one call, whether the repositories hold remote
+// changes to pull (the server caches the per-project restic checks)
 async function checkStatuses() {
-  await Promise.all(
-    projects.value.map(async (project) => {
-      statuses.value = { ...statuses.value, [project.id]: "checking" };
-      try {
-        const res = await api.get(`/projects/${project.id}/status`);
-        statuses.value = {
-          ...statuses.value,
-          [project.id]: {
-            needsPull: res.data.needsPull,
-            remoteLatestSnapshotTime: res.data.remoteLatestSnapshotTime,
-          },
-        };
-      } catch {
-        statuses.value = { ...statuses.value, [project.id]: "failed" };
-      }
-    }),
-  );
+  const ids = projects.value.map((project) => project.id);
+  const checking = { ...statuses.value };
+  for (const id of ids) {
+    checking[id] = "checking";
+  }
+  statuses.value = checking;
+  try {
+    const res = await api.get("/projects/status");
+    const statusesMap = res.data.statuses || {};
+    const next = {};
+    for (const id of ids) {
+      const status = statusesMap[id];
+      next[id] =
+        status && !status.error
+          ? {
+              needsPull: status.needsPull,
+              remoteLatestSnapshotTime: status.remoteLatestSnapshotTime,
+            }
+          : "failed";
+    }
+    statuses.value = next;
+  } catch {
+    const failed = {};
+    for (const id of ids) {
+      failed[id] = "failed";
+    }
+    statuses.value = failed;
+  }
 }
 
 function formatTime(iso) {
