@@ -12,7 +12,11 @@ import {
   ProjectsDataDelete,
   ProjectsDataList,
 } from "./ProjectsData";
-import { ProjectScopesAdd, ProjectScopesRemove } from "./ProjectScopes";
+import {
+  ProjectScopesAdd,
+  ProjectScopesPruneFromUsers,
+  ProjectScopesRemove,
+} from "./ProjectScopes";
 import {
   SecretsDataCountForProject,
   SecretsDataDeleteByProjectId,
@@ -141,6 +145,7 @@ export class ProjectsRoutes {
       await SecretsDataDeleteByProjectId(span, project.id);
       await ProjectsDataDelete(span, project.id);
       ProjectScopesRemove(project.id);
+      await ProjectScopesPruneFromUsers(span, project.id);
       return res.status(200).send({});
     });
 

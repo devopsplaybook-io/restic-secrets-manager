@@ -15,12 +15,10 @@ import * as path from "path";
 import { Config } from "./Config";
 import {
   OTelLogger,
-  OTelRequestSpan,
   OTelSetMeter,
   OTelSetTracer,
   OTelTracer,
 } from "./OTelContext";
-import { ProjectsDataList } from "./projects/ProjectsData";
 import { ProjectsRoutes } from "./projects/ProjectsRoutes";
 import { ProjectScopesSync } from "./projects/ProjectScopes";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
@@ -95,11 +93,6 @@ Promise.resolve().then(async () => {
       return res.status(200).send({ initialized: false });
     }
     return res.status(200).send({ initialized: true });
-  });
-
-  fastify.get("/api/status/projects", async (req, res) => {
-    const projects = await ProjectsDataList(OTelRequestSpan(req));
-    return res.status(200).send({ count: projects.length });
   });
 
   // Register API routes

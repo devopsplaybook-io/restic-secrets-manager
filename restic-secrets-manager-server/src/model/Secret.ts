@@ -84,6 +84,8 @@ export class Secret {
       errors.push(
         "Invalid secret: name must start with a letter or digit and only contain letters, digits, '.', '_' or '-'",
       );
+    } else if (name.length > 200) {
+      errors.push("Invalid secret: name must be 200 characters or less");
     }
     return errors;
   }

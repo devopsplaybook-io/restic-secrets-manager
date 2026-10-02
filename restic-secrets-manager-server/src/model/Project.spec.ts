@@ -53,6 +53,22 @@ describe("Project validateNew", () => {
     ]);
   });
 
+  it("should reject names longer than the 100 character column", () => {
+    const payload = {
+      s3Endpoint: "s3.example.com",
+      s3Bucket: "bucket",
+      s3AccessKeyId: "key",
+      s3SecretAccessKey: "secret",
+      resticPassword: "password",
+    };
+    expect(Project.validateNew({ ...payload, name: "a".repeat(101) })).toEqual([
+      "Invalid project: name must be 100 characters or less",
+    ]);
+    expect(Project.validateNew({ ...payload, name: "a".repeat(100) })).toEqual(
+      [],
+    );
+  });
+
   it("should accept a complete payload", () => {
     const errors = Project.validateNew({
       name: "Test",

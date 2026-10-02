@@ -80,7 +80,7 @@
       </div>
       <small class="text-muted">
         <i class="bi bi-shield-lock"/> Credentials (access key, secret key and
-        restic password) are stored encrypted at rest and are never displayed.
+        restic password) are stored in the project and are never displayed.
       </small>
     </article>
     <!-- SECRET EDITOR MODAL -->

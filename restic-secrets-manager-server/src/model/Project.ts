@@ -67,6 +67,8 @@ export class Project {
     }
     if (!isNonEmptyString(json.name)) {
       errors.push("Invalid project: name is required");
+    } else if ((json.name as string).length > 100) {
+      errors.push("Invalid project: name must be 100 characters or less");
     }
     if (!isNonEmptyString(json.s3Endpoint)) {
       errors.push("Invalid project: s3Endpoint is required");

@@ -24,7 +24,9 @@ export class SecretsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/secrets",
       async (req, res) => {
-        await ProjectAccessEnsure(req, res, req.params.id);
+        if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
         const secrets = await SecretsDataListForProject(
           OTelRequestSpan(req),
           req.params.id,
@@ -40,7 +42,9 @@ export class SecretsRoutes {
       Params: { id: string };
       Body: { name?: string; data?: SecretData };
     }>("/:id/secrets", async (req, res) => {
-      await ProjectAccessEnsure(req, res, req.params.id);
+      if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
       const body = req.body || ({} as Record<string, unknown>);
       const name = (body.name as string) || "";
       const errors = Secret.validate(name, body.data);
@@ -76,7 +80,9 @@ export class SecretsRoutes {
       Params: { id: string; secretId: string };
       Body: { name?: string; data?: SecretData };
     }>("/:id/secrets/:secretId", async (req, res) => {
-      await ProjectAccessEnsure(req, res, req.params.id);
+      if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
       const secret = await SecretsDataGet(
         OTelRequestSpan(req),
         req.params.secretId,
@@ -134,7 +140,9 @@ export class SecretsRoutes {
     fastify.delete<{ Params: { id: string; secretId: string } }>(
       "/:id/secrets/:secretId",
       async (req, res) => {
-        await ProjectAccessEnsure(req, res, req.params.id);
+        if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
         const secret = await SecretsDataGet(
           OTelRequestSpan(req),
           req.params.secretId,

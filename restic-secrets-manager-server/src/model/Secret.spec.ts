@@ -86,6 +86,13 @@ describe("Secret validateName", () => {
       "Invalid secret: name must start with a letter or digit and only contain letters, digits, '.', '_' or '-'",
     ]);
   });
+
+  it("should reject names longer than the 200 character column", () => {
+    expect(Secret.validateName("a".repeat(201))).toEqual([
+      "Invalid secret: name must be 200 characters or less",
+    ]);
+    expect(Secret.validateName("a".repeat(200))).toEqual([]);
+  });
 });
 
 describe("Secret validate", () => {
