@@ -26,6 +26,7 @@
 ## Packaging
 
 - Single Docker image (node:26-alpine) including the `restic` binary, serving the API and the generated web assets
+- Static assets are served as immutable; the SPA entry files (`index.html`, `sw.js`, `manifest.webmanifest`) are always revalidated so upgrades are picked up without stale-build chunk errors
 - GitHub Actions CI reusing the shared devopsplaybook.io workflows
 
-Last spec review: 2026-09-13
+Last spec review: 2026-10-03

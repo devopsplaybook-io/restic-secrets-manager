@@ -8,7 +8,6 @@ import {
 } from "@devopsplaybook.io/common-utils";
 import fastifyCompress from "@fastify/compress";
 import fastifyCors from "@fastify/cors";
-import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { watchFile } from "fs-extra";
 import * as path from "path";
@@ -23,6 +22,7 @@ import { ProjectsRoutes } from "./projects/ProjectsRoutes";
 import { ProjectScopesSync } from "./projects/ProjectScopes";
 import { SecretsHashBackfillAll } from "./secrets/SecretsHash";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
+import { registerStaticFiles } from "./StaticCacheHeaders";
 import { AuthWiringSetOTel } from "./users/AuthWiring";
 import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
 
@@ -120,15 +120,7 @@ Promise.resolve().then(async () => {
     { prefix: "/api/projects" },
   );
 
-  fastify.register(fastifyStatic, {
-    root: path.join(__dirname, "../web"),
-    prefix: "/",
-    maxAge: "1d",
-    etag: true,
-    lastModified: true,
-    immutable: true,
-    cacheControl: true,
-  });
+  await registerStaticFiles(fastify, path.join(__dirname, "../web"));
 
   fastify.setNotFoundHandler((request, reply) => {
     if (
