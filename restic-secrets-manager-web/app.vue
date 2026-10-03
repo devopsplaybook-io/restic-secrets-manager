@@ -19,6 +19,18 @@ if (!authStore.isAuthenticated) {
   router.push("/login");
 }
 
+// A stale SPA entry (served before an upgrade) references chunks that no
+// longer exist on the server: reload to pick up the current build.
+router.onError((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes("Failed to fetch dynamically imported module") ||
+    message.includes("Loading chunk")
+  ) {
+    window.location.reload();
+  }
+});
+
 // Theme management
 const theme = ref(localStorage.getItem("theme") || "system");
 
