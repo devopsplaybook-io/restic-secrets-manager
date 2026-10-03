@@ -1,4 +1,9 @@
-import { User } from "@devopsplaybook.io/common-utils";
+import { Span } from "@opentelemetry/sdk-trace-base";
+import {
+  User,
+  UsersDataList,
+  UsersDataUpdateUser,
+} from "@devopsplaybook.io/common-utils";
 import { ProjectsDataList } from "./ProjectsData";
 
 /** Prefix of the user scope granting access to a project. */
@@ -32,4 +37,22 @@ export function ProjectScopesAdd(projectId: string): void {
 export function ProjectScopesRemove(projectId: string): void {
   const scope = projectScope(projectId);
   User.ALL_SCOPES = User.ALL_SCOPES.filter((s) => s !== scope);
+}
+
+/**
+ * Remove a deleted project scope from the stored user records, so users
+ * do not keep a scope pointing at a project that no longer exists.
+ */
+export async function ProjectScopesPruneFromUsers(
+  context: Span | undefined,
+  projectId: string,
+): Promise<void> {
+  const scope = projectScope(projectId);
+  const users = await UsersDataList(context);
+  for (const user of users) {
+    if (user.scopes?.includes(scope)) {
+      user.scopes = user.scopes.filter((s) => s !== scope);
+      await UsersDataUpdateUser(context, user);
+    }
+  }
 }

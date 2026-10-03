@@ -12,23 +12,36 @@ import {
   ProjectsDataDelete,
   ProjectsDataList,
 } from "./ProjectsData";
-import { ProjectScopesAdd, ProjectScopesRemove } from "./ProjectScopes";
+import {
+  ProjectScopesAdd,
+  ProjectScopesPruneFromUsers,
+  ProjectScopesRemove,
+} from "./ProjectScopes";
 import {
   SecretsDataCountForProject,
+  SecretsDataCountsAll,
   SecretsDataDeleteByProjectId,
-  SecretsDataListForProject,
 } from "../secrets/SecretsData";
-import { ProjectAccessCanAccess } from "../users/ProjectAccess";
+import {
+  ProjectAccessCanAccess,
+  ProjectAccessCanAccessMany,
+} from "../users/ProjectAccess";
 import {
   computeHasLocalChanges,
+  SecretsHashRefreshForProject,
+} from "../secrets/SecretsHash";
+import {
   ResticSyncDiscardLocalChanges,
   ResticSyncError,
   ResticSyncListSnapshots,
   ResticSyncPull,
   ResticSyncPush,
   ResticSyncRestoreSnapshot,
-  ResticSyncStatus,
 } from "../restic/SyncService";
+import {
+  SyncStatusCacheGet,
+  SyncStatusCacheInvalidate,
+} from "../restic/SyncStatusCache";
 import { Config } from "../Config";
 
 export class ProjectsRoutes {
@@ -45,23 +58,51 @@ export class ProjectsRoutes {
       }
       const span = OTelRequestSpan(req);
       const projects = await ProjectsDataList(span);
+      const counts = await SecretsDataCountsAll(span);
+      const visibleIds = await ProjectAccessCanAccessMany(
+        userSession,
+        projects.map((project) => project.id),
+      );
       const visible: Record<string, unknown>[] = [];
       for (const project of projects) {
-        if (
-          userSession.role === "admin" ||
-          (await ProjectAccessCanAccess(userSession, project.id))
-        ) {
+        if (visibleIds.has(project.id)) {
+          const secretCount = counts.get(project.id) ?? 0;
           visible.push({
             ...project.toTransportJson(),
-            secretCount: await SecretsDataCountForProject(span, project.id),
-            hasLocalChanges: computeHasLocalChanges(
-              project,
-              await SecretsDataListForProject(span, project.id),
-            ),
+            secretCount,
+            hasLocalChanges: computeHasLocalChanges(project, secretCount),
           });
         }
       }
       return res.status(200).send({ projects: visible });
+    });
+
+    // Synchronization status of all the projects visible to the user, in
+    // one call (each status is served by the short-TTL cache)
+    fastify.get("/status", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
+      if (!userSession.isAuthenticated) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      const span = OTelRequestSpan(req);
+      const projects = await ProjectsDataList(span);
+      const visibleIds = await ProjectAccessCanAccessMany(
+        userSession,
+        projects.map((project) => project.id),
+      );
+      const statuses: Record<string, unknown> = {};
+      await Promise.all(
+        projects
+          .filter((project) => visibleIds.has(project.id))
+          .map(async (project) => {
+            try {
+              statuses[project.id] = await SyncStatusCacheGet(span, project);
+            } catch {
+              statuses[project.id] = { error: true };
+            }
+          }),
+      );
+      return res.status(200).send({ statuses });
     });
 
     //
@@ -86,6 +127,7 @@ export class ProjectsRoutes {
       const project = Project.fromJson(body) as Project;
       await ProjectsDataAdd(OTelRequestSpan(req), project);
       ProjectScopesAdd(project.id);
+      await SecretsHashRefreshForProject(OTelRequestSpan(req), project.id);
       return res.status(201).send({ project: project.toTransportJson() });
     });
 
@@ -109,14 +151,12 @@ export class ProjectsRoutes {
         return res.status(403).send({ error: "Access Denied" });
       }
       const span = OTelRequestSpan(req);
+      const secretCount = await SecretsDataCountForProject(span, project.id);
       return res.status(200).send({
         project: {
           ...project.toTransportJson(),
-          secretCount: await SecretsDataCountForProject(span, project.id),
-          hasLocalChanges: computeHasLocalChanges(
-            project,
-            await SecretsDataListForProject(span, project.id),
-          ),
+          secretCount,
+          hasLocalChanges: computeHasLocalChanges(project, secretCount),
         },
       });
     });
@@ -141,6 +181,8 @@ export class ProjectsRoutes {
       await SecretsDataDeleteByProjectId(span, project.id);
       await ProjectsDataDelete(span, project.id);
       ProjectScopesRemove(project.id);
+      await ProjectScopesPruneFromUsers(span, project.id);
+      SyncStatusCacheInvalidate(project.id);
       return res.status(200).send({});
     });
 
@@ -163,6 +205,7 @@ export class ProjectsRoutes {
       }
       try {
         const result = await ResticSyncPull(span, config, project);
+        SyncStatusCacheInvalidate(project.id);
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);
@@ -188,6 +231,7 @@ export class ProjectsRoutes {
       }
       try {
         const result = await ResticSyncPush(span, config, project);
+        SyncStatusCacheInvalidate(project.id);
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);
@@ -213,7 +257,7 @@ export class ProjectsRoutes {
         return res.status(403).send({ error: "Access Denied" });
       }
       try {
-        const result = await ResticSyncStatus(span, project);
+        const result = await SyncStatusCacheGet(span, project);
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);
@@ -274,6 +318,7 @@ export class ProjectsRoutes {
             project,
             req.params.snapshotId,
           );
+          SyncStatusCacheInvalidate(project.id);
           return res.status(200).send(result);
         } catch (e) {
           return sendSyncError(res, e);
@@ -301,6 +346,7 @@ export class ProjectsRoutes {
       }
       try {
         const result = await ResticSyncDiscardLocalChanges(span, config, project);
+        SyncStatusCacheInvalidate(project.id);
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);

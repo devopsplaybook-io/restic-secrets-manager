@@ -1,5 +1,11 @@
 import { Span } from "@opentelemetry/sdk-trace-base";
-import { DbUtilsExecSQL, DbUtilsQuerySQL } from "../utils-std-ts/DbUtils";
+import {
+  convertToPostgresPlaceholders,
+  DbUtilsExecSQL,
+  DbUtilsGetDatabase,
+  DbUtilsGetType,
+  DbUtilsQuerySQL,
+} from "../utils-std-ts/DbUtils";
 import { Secret } from "../model/Secret";
 
 export async function SecretsDataListForProject(
@@ -61,6 +67,18 @@ export async function SecretsDataCountForProject(
   return resultRaw.length > 0 ? parseInt(resultRaw[0].count, 10) : 0;
 }
 
+/** Secret counts of every project, in one grouped query. */
+export async function SecretsDataCountsAll(
+  context: Span | undefined,
+): Promise<Map<string, number>> {
+  const rows = await DbUtilsQuerySQL(context, SQL_QUERIES.COUNT_ALL);
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    counts.set(row.projectId, parseInt(row.count, 10));
+  }
+  return counts;
+}
+
 export async function SecretsDataAdd(
   context: Span | undefined,
   secret: Secret,
@@ -113,17 +131,60 @@ export async function SecretsDataDeleteByProjectId(
 
 /**
  * Replaces all the secrets of a project with the provided list
- * (used when pulling from the restic repository).
+ * (used when pulling from the restic repository). The delete and the
+ * inserts run in a single transaction: a failure leaves the previous
+ * secret set untouched.
  */
 export async function SecretsDataReplaceForProject(
   context: Span | undefined,
   projectId: string,
   secrets: Secret[],
 ): Promise<void> {
-  await SecretsDataDeleteByProjectId(context, projectId);
-  for (const secret of secrets) {
-    await SecretsDataAdd(context, secret);
+  if (DbUtilsGetType() === "sqlite") {
+    // better-sqlite3 executes synchronously: do not await inside the
+    // transaction callback or it would commit before the statements run.
+    const db = DbUtilsGetDatabase();
+    const apply = db.transaction(() => {
+      DbUtilsExecSQL(context, SQL_QUERIES.DELETE_BY_PROJECT, [projectId]);
+      for (const secret of secrets) {
+        DbUtilsExecSQL(context, SQL_QUERIES.INSERT_SECRET, insertParams(secret));
+      }
+    });
+    apply();
+    return;
   }
+  const pool = DbUtilsGetDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      convertToPostgresPlaceholders(SQL_QUERIES.DELETE_BY_PROJECT),
+      [projectId],
+    );
+    for (const secret of secrets) {
+      await client.query(
+        convertToPostgresPlaceholders(SQL_QUERIES.INSERT_SECRET),
+        insertParams(secret),
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+function insertParams(secret: Secret): unknown[] {
+  return [
+    secret.id,
+    secret.projectId,
+    secret.name,
+    JSON.stringify(secret.data),
+    secret.dateCreated,
+    secret.dateUpdated,
+  ];
 }
 
 // SQL
@@ -137,6 +198,7 @@ const SQL_QUERIES = {
   GET_BY_NAME: 'SELECT * FROM secrets WHERE "projectId" = ? AND "name" = ?',
   COUNT_FOR_PROJECT:
     'SELECT COUNT(*) AS count FROM secrets WHERE "projectId" = ?',
+  COUNT_ALL: 'SELECT "projectId", COUNT(*) AS count FROM secrets GROUP BY "projectId"',
   INSERT_SECRET:
     'INSERT INTO secrets ("id", "projectId", "name", "data", "dateCreated", "dateUpdated") VALUES (?, ?, ?, ?, ?, ?)',
   UPDATE_DATA:

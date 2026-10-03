@@ -2,10 +2,8 @@ import { StandardMeter, StandardTracer } from "@devopsplaybook.io/otel-utils";
 import { StandardTracerFastifyRegisterHooks } from "@devopsplaybook.io/otel-utils-fastify";
 import {
   AuthInit,
-  AuthSetOTel,
   User,
   UsersDataList,
-  UsersDataSetOTel,
   UsersRoutes,
 } from "@devopsplaybook.io/common-utils";
 import fastifyCompress from "@fastify/compress";
@@ -17,15 +15,15 @@ import * as path from "path";
 import { Config } from "./Config";
 import {
   OTelLogger,
-  OTelRequestSpan,
   OTelSetMeter,
   OTelSetTracer,
   OTelTracer,
 } from "./OTelContext";
-import { ProjectsDataList } from "./projects/ProjectsData";
 import { ProjectsRoutes } from "./projects/ProjectsRoutes";
 import { ProjectScopesSync } from "./projects/ProjectScopes";
+import { SecretsHashBackfillAll } from "./secrets/SecretsHash";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
+import { AuthWiringSetOTel } from "./users/AuthWiring";
 import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
 
 const logger = OTelLogger().createModuleLogger("app");
@@ -54,11 +52,12 @@ Promise.resolve().then(async () => {
     config,
     path.join(__dirname, `../sql/${config.DATABASE_TYPE}`),
   );
-  AuthSetOTel(OTelTracer());
-  UsersDataSetOTel(OTelTracer());
+  AuthWiringSetOTel(OTelTracer());
 
   // User scopes are the dynamic project access scopes
   await ProjectScopesSync();
+  // One-time backfill of the stored secrets content hashes (L10 upgrade)
+  await SecretsHashBackfillAll(span);
   await AuthInit(span, config, [...User.ALL_SCOPES]);
 
   span.end();
@@ -97,11 +96,6 @@ Promise.resolve().then(async () => {
       return res.status(200).send({ initialized: false });
     }
     return res.status(200).send({ initialized: true });
-  });
-
-  fastify.get("/api/status/projects", async (req, res) => {
-    const projects = await ProjectsDataList(OTelRequestSpan(req));
-    return res.status(200).send({ count: projects.length });
   });
 
   // Register API routes

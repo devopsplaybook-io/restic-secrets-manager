@@ -86,6 +86,13 @@ describe("Secret validateName", () => {
       "Invalid secret: name must start with a letter or digit and only contain letters, digits, '.', '_' or '-'",
     ]);
   });
+
+  it("should reject names longer than the 200 character column", () => {
+    expect(Secret.validateName("a".repeat(201))).toEqual([
+      "Invalid secret: name must be 200 characters or less",
+    ]);
+    expect(Secret.validateName("a".repeat(200))).toEqual([]);
+  });
 });
 
 describe("Secret validate", () => {
@@ -113,6 +120,12 @@ describe("Secret validate", () => {
     const errors = Secret.validate("name", { OK: "yes", BAD: { a: 1 } });
     expect(errors).toEqual([
       "Invalid secret: value for key 'BAD' must be a scalar",
+    ]);
+  });
+
+  it("should reject an empty key (rejected by pull import)", () => {
+    expect(Secret.validate("name", { "": "value" })).toEqual([
+      "Invalid secret: empty key is not allowed",
     ]);
   });
 

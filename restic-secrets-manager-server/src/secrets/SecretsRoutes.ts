@@ -1,3 +1,4 @@
+import { isUniqueViolationError } from "@devopsplaybook.io/common-utils";
 import { FastifyInstance } from "fastify";
 import { Secret, SecretData } from "../model/Secret";
 import { OTelRequestSpan } from "../OTelContext";
@@ -11,6 +12,7 @@ import {
   SecretsDataUpdateName,
 } from "./SecretsData";
 import { ProjectAccessEnsure } from "../users/ProjectAccess";
+import { SecretsHashRefreshForProject } from "./SecretsHash";
 
 /**
  * Secrets routes, registered under the /api/projects prefix.
@@ -23,7 +25,9 @@ export class SecretsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/secrets",
       async (req, res) => {
-        await ProjectAccessEnsure(req, res, req.params.id);
+        if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+          return;
+        }
         const secrets = await SecretsDataListForProject(
           OTelRequestSpan(req),
           req.params.id,
@@ -39,7 +43,9 @@ export class SecretsRoutes {
       Params: { id: string };
       Body: { name?: string; data?: SecretData };
     }>("/:id/secrets", async (req, res) => {
-      await ProjectAccessEnsure(req, res, req.params.id);
+      if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
       const body = req.body || ({} as Record<string, unknown>);
       const name = (body.name as string) || "";
       const errors = Secret.validate(name, body.data);
@@ -57,7 +63,17 @@ export class SecretsRoutes {
       secret.projectId = req.params.id;
       secret.name = name;
       secret.data = Secret.normalizeData(body.data);
-      await SecretsDataAdd(OTelRequestSpan(req), secret);
+      try {
+        await SecretsDataAdd(OTelRequestSpan(req), secret);
+      } catch (e) {
+        if (isUniqueViolationError(e)) {
+          return res
+            .status(409)
+            .send({ error: "A secret with this name already exists" });
+        }
+        throw e;
+      }
+      await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
       return res.status(201).send({ secret: secret.toJson() });
     });
 
@@ -66,7 +82,9 @@ export class SecretsRoutes {
       Params: { id: string; secretId: string };
       Body: { name?: string; data?: SecretData };
     }>("/:id/secrets/:secretId", async (req, res) => {
-      await ProjectAccessEnsure(req, res, req.params.id);
+      if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
       const secret = await SecretsDataGet(
         OTelRequestSpan(req),
         req.params.secretId,
@@ -102,12 +120,22 @@ export class SecretsRoutes {
             .send({ error: "A secret with this name already exists" });
         }
         secret.name = newName;
-        await SecretsDataUpdateName(OTelRequestSpan(req), secret);
+        try {
+          await SecretsDataUpdateName(OTelRequestSpan(req), secret);
+        } catch (e) {
+          if (isUniqueViolationError(e)) {
+            return res
+              .status(409)
+              .send({ error: "A secret with this name already exists" });
+          }
+          throw e;
+        }
       }
       if (hasData) {
         secret.data = Secret.normalizeData(body.data);
         await SecretsDataUpdateData(OTelRequestSpan(req), secret);
       }
+      await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
       return res.status(200).send({ secret: secret.toJson() });
     });
 
@@ -115,7 +143,9 @@ export class SecretsRoutes {
     fastify.delete<{ Params: { id: string; secretId: string } }>(
       "/:id/secrets/:secretId",
       async (req, res) => {
-        await ProjectAccessEnsure(req, res, req.params.id);
+        if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+          return;
+        }
         const secret = await SecretsDataGet(
           OTelRequestSpan(req),
           req.params.secretId,
@@ -124,6 +154,7 @@ export class SecretsRoutes {
           return res.status(404).send({ error: "Secret Not Found" });
         }
         await SecretsDataDelete(OTelRequestSpan(req), secret.id);
+        await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
         return res.status(200).send({});
       },
     );
