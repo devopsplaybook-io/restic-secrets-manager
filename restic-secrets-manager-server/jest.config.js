@@ -1,7 +1,7 @@
 module.exports = {
   moduleFileExtensions: ["ts", "js"],
   transform: {
-    "^.+\\.(ts|tsx)$": [
+    "^.+\\.(ts|tsx|js|mjs)$": [
       "@swc/jest",
       {
         jsc: {
@@ -10,6 +10,8 @@ module.exports = {
       },
     ],
   },
+  // cookie@2 is ESM-only and is require()d by light-my-request under Jest
+  transformIgnorePatterns: ["/node_modules/(?!(cookie)/)"],
   coverageProvider: "v8",
   moduleNameMapper: {
     "^uuid$": "<rootDir>/src/__mocks__/uuid.ts",
