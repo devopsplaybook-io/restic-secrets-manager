@@ -16,6 +16,8 @@
 ## Behavior
 
 - [x] When the session expires (1 hour, no renewal), the user is redirected to the login page
+- [x] Shortly before the session ends (5 minutes or less remaining), a warning banner shows the time left and invites the user to save their work
+- [x] After a session-expiry redirect, logging in sends the user back to the page they were working on
 - [x] Destructive actions (delete project, delete user, delete secret) ask for confirmation
 - [x] Push conflicts (more recent snapshot in the repository) surface a clear error message
 - [x] All dialogs are modal native `<dialog>` elements (showModal): centered with dimmed backdrop; Esc, backdrop click and Cancel/Close buttons dismiss them
@@ -46,5 +48,10 @@
 - [x] The secret editor dialog offers a Home button to go back to the home page without saving (same behavior as Cancel)
 - [x] Each key row has a "..." action menu (Copy to another secret, Remove) replacing the former inline remove button; the reveal toggle stays
 - [x] The Copy Key dialog shows the source key and its masked value (with reveal), lists the project's other secrets as targets, prefills the target key name with the source key and warns when the target already holds that key
+- [x] Each key row can be toggled between a single-line masked input and a multiline unmasked textarea; pasting a multiline value into a single-line input switches the row to the multiline editor
+- [x] Each key row has a copy-value button that copies the value to the clipboard (with feedback and an automatic clipboard clear after 30 seconds)
+- [x] In create mode, a collapsible "Import from .env or JSON" block parses pasted content into key/value rows and reports parse errors and duplicate-key warnings inline
+- [x] Closing the editor (Cancel, ×, backdrop, Esc), navigating away or closing the tab with unsaved changes asks for a confirmation ("Discard unsaved changes?") before discarding them
+- [x] When unsaved edits existed during a session-expiry redirect, reopening the project page offers to restore them (as an edit of the same secret when it still exists, otherwise as a new secret with the name prefilled)
 
-Last spec review: 2026-09-24
+Last spec review: 2026-10-17

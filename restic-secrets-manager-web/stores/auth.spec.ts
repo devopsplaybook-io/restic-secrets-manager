@@ -54,6 +54,31 @@ describe("useAuthStore.init", () => {
     expect(store.initialized).toBe(true);
   });
 
+  it("should record the token expiry time from a valid token", () => {
+    const exp = Math.floor(Date.now() / 1000) + 1800;
+    localStorage.setItem("token", makeToken({ ...validPayload(), exp }));
+    const store = useAuthStore();
+    store.init();
+    expect(store.expiresAt).toBe(exp * 1000);
+    expect(store.sessionMinutesRemaining).toBe(30);
+    expect(store.sessionExpiresSoon).toBe(false);
+  });
+
+  it("should report an expiring session", () => {
+    const exp = Math.floor(Date.now() / 1000) + 120;
+    localStorage.setItem("token", makeToken({ ...validPayload(), exp }));
+    const store = useAuthStore();
+    store.init();
+    expect(store.sessionMinutesRemaining).toBe(2);
+    expect(store.sessionExpiresSoon).toBe(true);
+  });
+
+  it("should have no remaining-session information without an expiry", () => {
+    const store = useAuthStore();
+    expect(store.sessionMinutesRemaining).toBeNull();
+    expect(store.sessionExpiresSoon).toBe(false);
+  });
+
   it("should logout an expired token", () => {
     localStorage.setItem(
       "token",
@@ -63,6 +88,7 @@ describe("useAuthStore.init", () => {
     store.init();
     expect(store.isAuthenticated).toBe(false);
     expect(store.user).toBeNull();
+    expect(store.expiresAt).toBe(0);
     expect(localStorage.getItem("token")).toBeNull();
   });
 
@@ -93,13 +119,27 @@ describe("useAuthStore.login / logout", () => {
     );
   });
 
-  it("should clear the session on logout", () => {
+  it("should record the expiry of the token received on login", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    apiMock.post.mockResolvedValue({
+      data: {
+        token: makeToken({ ...validPayload(), exp }),
+        user: { name: "alice", role: "admin" },
+      },
+    });
+    const store = useAuthStore();
+    await store.login("alice", "secret");
+    expect(store.expiresAt).toBe(exp * 1000);
+  });
+
+  it("should clear the session and the expiry on logout", () => {
     localStorage.setItem("token", "tok-1");
     localStorage.setItem("user", '{"name":"alice"}');
     const store = useAuthStore();
     store.logout();
     expect(store.token).toBe("");
     expect(store.user).toBeNull();
+    expect(store.expiresAt).toBe(0);
     expect(localStorage.getItem("token")).toBeNull();
     expect(localStorage.getItem("user")).toBeNull();
   });

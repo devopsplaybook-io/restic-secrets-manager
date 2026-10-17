@@ -3,6 +3,7 @@
     <header>
       <Navigation />
     </header>
+    <SessionExpiryBanner />
     <main>
       <NuxtPage />
     </main>
@@ -90,7 +91,7 @@ provide("toggleTheme", toggleTheme);
 #page-layout {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   width: 100vw;
   height: var(--app-height, 100dvh);
   overflow: hidden !important;
@@ -107,7 +108,7 @@ main {
 
 main {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3;
   overflow-x: hidden;
   overflow-y: auto;
   width: 100%;
