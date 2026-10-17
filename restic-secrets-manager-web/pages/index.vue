@@ -28,14 +28,17 @@
         <footer class="project-card-footer">
           <div v-if="project.hasLocalChanges || statusOf(project.id)" class="card-badges">
             <template v-if="project.hasLocalChanges">
-              <span class="badge badge-warn" title="Secrets were modified since the last synchronization">
-                <i class="bi bi-pencil-fill"/> Local changes not pushed
-              </span>
+              <button
+                class="badge badge-warn badge-btn"
+                title="Secrets were modified since the last synchronization: review what discarding would restore"
+                @click="openPreview(project, 'discard')"
+              >
+                <i class="bi bi-pencil-fill"/> Review changes
+              </button>
               <button
                 class="btn-discard"
-                :disabled="discarding === project.id"
                 title="Restore the last synchronized snapshot, losing the local changes"
-                @click="confirmDiscard(project)"
+                @click="openPreview(project, 'discard')"
               >
                 <i class="bi bi-arrow-counterclockwise"/> Discard
               </button>
@@ -73,7 +76,7 @@
           </div>
         </footer>
         <div class="sync-actions">
-          <button class="secondary" :disabled="syncing === project.id" @click="pullProject(project)">
+          <button class="secondary" @click="openPreview(project, 'pull')">
             <i class="bi bi-cloud-download"/> Pull
           </button>
           <button class="secondary" :disabled="syncing === project.id" @click="pushProject(project)">
@@ -188,30 +191,15 @@
         </footer>
       </article>
     </dialog>
-    <!-- DISCARD CONFIRM MODAL -->
-    <dialog v-if="showDiscardConfirm" ref="discard-confirm" @click.self="discardModal.close()" @close="onDiscardModalClosed">
-      <article>
-        <header>
-          <button aria-label="Close" class="close-btn" @click="discardModal.close()"><i class="bi bi-x-lg"/></button>
-          <h3><i class="bi bi-exclamation-triangle-fill"/> Discard Local Changes</h3>
-        </header>
-        <p>
-          Discard the local modifications of project
-          <strong>{{ discardTarget?.name }}</strong
-          >? The secrets will be restored from the last synchronized snapshot
-          and the local changes that were not pushed will be lost.
-        </p>
-        <p>This action cannot be undone.</p>
-        <footer>
-          <button class="secondary" @click="discardModal.close()">Cancel</button>
-          <!-- :disabled needs a boolean: a raw empty string ("") is truthy for
-               boolean attributes in Vue and would permanently disable the button -->
-          <button class="contrast" :disabled="discarding !== ''" @click="executeDiscard">
-            {{ discarding ? "Discarding…" : "Discard" }}
-          </button>
-        </footer>
-      </article>
-    </dialog>
+    <!-- SYNC PREVIEW MODAL (pull, discard and remote-change reviews) -->
+    <SyncPreviewModal
+      v-if="previewState"
+      :project="previewState.project"
+      :mode="previewState.mode"
+      :snapshot-id="previewState.snapshotId"
+      @closed="onPreviewClosed"
+      @done="onPreviewDone"
+    />
 
     <!-- SNAPSHOT HISTORY MODAL -->
     <SnapshotHistoryModal
@@ -249,10 +237,8 @@ const syncResult = ref(null);
 // "checking" | "failed" | { needsPull, remoteLatestSnapshotTime }
 const statuses = ref({});
 
-const discardModal = useModalDialog("discard-confirm");
-const showDiscardConfirm = discardModal.isOpen;
-const discardTarget = ref(null);
-const discarding = ref("");
+// Open change preview: { project, mode: "pull" | "discard", snapshotId? }
+const previewState = ref(null);
 
 const historyProject = ref(null);
 
@@ -400,24 +386,6 @@ function onSyncModalClosed() {
   syncResult.value = null;
 }
 
-async function pullProject(project) {
-  syncing.value = project.id;
-  error.value = "";
-  try {
-    const res = await api.post(`/projects/${project.id}/pull`);
-    syncResult.value = {
-      message: `Pulled ${res.data.secrets} secret(s) and ${res.data.keys} key(s) from snapshot ${res.data.snapshotId.substring(0, 8)}.`,
-    };
-    syncModal.open();
-    await loadProjects();
-    await checkStatuses();
-  } catch (e) {
-    error.value = e.response?.data?.error || "Pull failed";
-  } finally {
-    syncing.value = "";
-  }
-}
-
 async function pushProject(project) {
   syncing.value = project.id;
   error.value = "";
@@ -443,36 +411,24 @@ async function pushProject(project) {
   }
 }
 
-// Discard local changes
+// Change previews (pull, discard)
 
-function confirmDiscard(project) {
-  discardTarget.value = project;
-  discardModal.open();
+function openPreview(project, mode, snapshotId = "") {
+  previewState.value = { project, mode, snapshotId };
 }
 
-function onDiscardModalClosed() {
-  discardModal.onClose();
-  discardTarget.value = null;
+function onPreviewClosed() {
+  previewState.value = null;
 }
 
-async function executeDiscard() {
-  discarding.value = discardTarget.value.id;
-  try {
-    const res = await api.post(`/projects/${discardTarget.value.id}/discard`);
-    discardModal.close();
-    syncResult.value = {
-      message: `Discarded local changes: restored ${res.data.secrets} secret(s) and ${res.data.keys} key(s) from snapshot ${res.data.snapshotId.substring(0, 8)}.`,
-    };
+async function onPreviewDone(message) {
+  previewState.value = null;
+  if (message) {
+    syncResult.value = { message };
     syncModal.open();
-    await loadProjects();
-    await checkStatuses();
-  } catch (e) {
-    error.value =
-      e.response?.data?.error || "Unable to discard the local changes";
-    discardModal.close();
-  } finally {
-    discarding.value = "";
   }
+  await loadProjects();
+  await checkStatuses();
 }
 
 // Snapshot history
@@ -558,6 +514,20 @@ async function onHistoryRestored() {
 
 .badge-warn {
   background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+/* A badge that is also an action button (e.g. "Review changes"):
+   reset the Pico button styling to keep the badge look */
+.badge-btn {
+  border: none;
+  width: auto;
+  margin: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.badge-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-warning) 28%, transparent);
   color: var(--color-warning);
 }
 

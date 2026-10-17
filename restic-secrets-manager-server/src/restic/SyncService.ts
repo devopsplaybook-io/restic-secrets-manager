@@ -48,6 +48,11 @@ export interface RestoreSnapshotResult {
 export interface SnapshotInfo {
   id: string;
   time: string;
+  /** User who pushed the snapshot (from the pushed-by restic tag). */
+  pushedBy?: string;
+  /** restic-reported user and host, used as fallback attribution. */
+  username?: string;
+  hostname?: string;
 }
 
 export interface SyncStatusResult {
@@ -140,9 +145,27 @@ export async function importPulledSecrets(
   dir: string,
   dataApi: any = DataApi,
 ): Promise<{ secrets: number; keys: number }> {
+  const secrets = await readSnapshotSecrets(dir);
+  for (const secret of secrets) {
+    secret.projectId = project.id;
+  }
+  const keys = secrets.reduce(
+    (sum, secret) => sum + Object.keys(secret.data).length,
+    0,
+  );
+  await dataApi.SecretsDataReplaceForProject(context, project.id, secrets);
+  return { secrets: secrets.length, keys };
+}
+
+/**
+ * Read and validate the JSON secret files of a restored snapshot folder.
+ * Invalid file names or content and snapshots holding only ignored files
+ * are rejected with 422. The returned secrets carry no project id: they
+ * are only the content of the snapshot.
+ */
+export async function readSnapshotSecrets(dir: string): Promise<Secret[]> {
   const entries = await fse.readdir(dir, { withFileTypes: true });
   const secrets: Secret[] = [];
-  let keys = 0;
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) {
       continue;
@@ -165,11 +188,9 @@ export async function importPulledSecrets(
       );
     }
     const secret = new Secret();
-    secret.projectId = project.id;
     secret.name = name;
     secret.data = data;
     secrets.push(secret);
-    keys += Object.keys(data).length;
   }
   if (secrets.length === 0 && entries.some((entry) => entry.isFile())) {
     throw new ResticSyncError(
@@ -177,12 +198,12 @@ export async function importPulledSecrets(
       422,
     );
   }
-  await dataApi.SecretsDataReplaceForProject(context, project.id, secrets);
-  return { secrets: secrets.length, keys };
+  return secrets;
 }
 
 /**
- * Push (backup) the project secrets to the repository.
+ * Push (backup) the project secrets to the repository, tagging the
+ * snapshot with the pushing user when known.
  * Rejected with 409 when the repository contains a more recent snapshot
  * than the last one synchronized by this project. Serialized per project
  * and re-checked against the fresh project state under the lock.
@@ -191,10 +212,11 @@ export async function ResticSyncPush(
   context: Span,
   config: Config,
   project: Project,
+  pushedBy: string | undefined,
   dataApi: any = DataApi,
 ): Promise<PushResult> {
   return SyncLocksRun(project.id, () =>
-    resticSyncPushUnlocked(context, config, project, dataApi),
+    resticSyncPushUnlocked(context, config, project, pushedBy, dataApi),
   );
 }
 
@@ -202,6 +224,7 @@ async function resticSyncPushUnlocked(
   context: Span,
   config: Config,
   project: Project,
+  pushedBy: string | undefined,
   dataApi: any,
 ): Promise<PushResult> {
   // Re-read the project under the lock: a queued sync may have moved the
@@ -239,7 +262,7 @@ async function resticSyncPushUnlocked(
       ensureNoNewerSnapshot(project, latest);
     }
 
-    await client.backup(secretsDir);
+    await client.backup(secretsDir, pushedBy);
 
     const snapshotsAfter = await client.snapshots();
     const latestAfter = latestSnapshot(snapshotsAfter);
@@ -302,7 +325,41 @@ export async function ResticSyncListSnapshots(
   return snapshots
     .slice()
     .sort((a, b) => (a.time > b.time ? -1 : a.time < b.time ? 1 : 0))
-    .map((snapshot) => ({ id: snapshot.id, time: snapshot.time }));
+    .map((snapshot) => ({
+      id: snapshot.id,
+      time: snapshot.time,
+      ...snapshotPusherInfo(snapshot),
+    }));
+}
+
+/**
+ * Attribution of a snapshot: the pushing user from the `pushed-by:` restic
+ * tag when present, falling back to the user and host reported by restic
+ * itself. Older snapshots carry no attribution.
+ */
+function snapshotPusherInfo(snapshot: ResticSnapshot): {
+  pushedBy?: string;
+  username?: string;
+  hostname?: string;
+} {
+  const username =
+    typeof snapshot.username === "string" && snapshot.username.length > 0
+      ? snapshot.username
+      : undefined;
+  const hostname =
+    typeof snapshot.hostname === "string" && snapshot.hostname.length > 0
+      ? snapshot.hostname
+      : undefined;
+  const tags = Array.isArray(snapshot.tags)
+    ? snapshot.tags.filter((tag) => typeof tag === "string")
+    : [];
+  const pushedByTag = tags.find((tag) => tag.startsWith("pushed-by:"));
+  const resticUser =
+    username && hostname ? `${username}@${hostname}` : undefined;
+  const pushedBy = pushedByTag
+    ? pushedByTag.substring("pushed-by:".length) || resticUser
+    : resticUser;
+  return { pushedBy, username, hostname };
 }
 
 /**

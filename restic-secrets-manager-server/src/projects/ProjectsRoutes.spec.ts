@@ -50,6 +50,12 @@ jest.mock("../restic/SyncService", () => ({
   ResticSyncRestoreSnapshot: jest.fn(),
 }));
 
+jest.mock("../restic/SyncPreview", () => ({
+  ResticSyncPreviewDiscardLocalChanges: jest.fn(),
+  ResticSyncPreviewPull: jest.fn(),
+  ResticSyncPreviewRestoreSnapshot: jest.fn(),
+}));
+
 jest.mock("../restic/SyncStatusCache", () => ({
   SyncStatusCacheGet: jest.fn(),
   SyncStatusCacheInvalidate: jest.fn(),
@@ -83,6 +89,11 @@ import {
   ResticSyncRestoreSnapshot,
 } from "../restic/SyncService";
 import {
+  ResticSyncPreviewDiscardLocalChanges,
+  ResticSyncPreviewPull,
+  ResticSyncPreviewRestoreSnapshot,
+} from "../restic/SyncPreview";
+import {
   SyncStatusCacheGet,
   SyncStatusCacheInvalidate,
 } from "../restic/SyncStatusCache";
@@ -105,6 +116,9 @@ const syncPullMock = ResticSyncPull as jest.Mock;
 const syncPushMock = ResticSyncPush as jest.Mock;
 const syncRestoreMock = ResticSyncRestoreSnapshot as jest.Mock;
 const syncDiscardMock = ResticSyncDiscardLocalChanges as jest.Mock;
+const previewPullMock = ResticSyncPreviewPull as jest.Mock;
+const previewRestoreMock = ResticSyncPreviewRestoreSnapshot as jest.Mock;
+const previewDiscardMock = ResticSyncPreviewDiscardLocalChanges as jest.Mock;
 
 function projectFixture(overrides: Partial<Project> = {}): Project {
   const project = new Project();
@@ -325,5 +339,112 @@ describe("synchronization endpoints", () => {
     const res = await fastify.inject({ method: "POST", url: "/nope/pull" });
     expect(res.statusCode).toBe(404);
     expect(syncPullMock).not.toHaveBeenCalled();
+  });
+
+  it("should forward the authenticated user name to the push", async () => {
+    syncPushMock.mockResolvedValue({
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+    const res = await fastify.inject({ method: "POST", url: "/p1/push" });
+    expect(res.statusCode).toBe(200);
+    expect(syncPushMock.mock.calls[0][3]).toBe("admin");
+  });
+});
+
+describe("preview endpoints", () => {
+  beforeEach(() => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    previewPullMock.mockResolvedValue({
+      summary: { secretsChanged: 1 },
+      secrets: [],
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+  });
+
+  it("should return the pull preview wrapped in a preview envelope", async () => {
+    const res = await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().preview.snapshotId).toBe("abc12345");
+    expect(previewPullMock).toHaveBeenCalled();
+  });
+
+  it("should return the discard preview", async () => {
+    previewDiscardMock.mockResolvedValue({
+      summary: {},
+      secrets: [],
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/preview/discard",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().preview.snapshotId).toBe("abc12345");
+  });
+
+  it("should return the snapshot restore preview", async () => {
+    previewRestoreMock.mockResolvedValue({
+      summary: {},
+      secrets: [],
+      snapshotId: "snap-1",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/preview/snapshots/snap-1",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().preview.snapshotId).toBe("snap-1");
+    expect(previewRestoreMock.mock.calls[0][3]).toBe("snap-1");
+  });
+
+  it("should map a preview sync error to its status code", async () => {
+    previewDiscardMock.mockRejectedValue(
+      new ResticSyncError("Project was never synchronized", 409),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/preview/discard",
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: "Project was never synchronized" });
+  });
+
+  it("should return 403 when the session is not authenticated", async () => {
+    userSessionMock.mockResolvedValue({
+      isAuthenticated: false,
+      userId: undefined,
+      userName: undefined,
+      role: "user",
+      scopes: [],
+    });
+    const res = await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
+    expect(res.statusCode).toBe(403);
+    expect(previewPullMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 404 when the project does not exist", async () => {
+    dataGetMock.mockResolvedValue(null);
+    const res = await fastify.inject({ method: "GET", url: "/nope/preview/pull" });
+    expect(res.statusCode).toBe(404);
+    expect(previewPullMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 403 when the user has no access to the project", async () => {
+    userSessionMock.mockResolvedValue({
+      isAuthenticated: true,
+      userId: "user-1",
+      userName: "alice",
+      role: "user",
+      scopes: [],
+    });
+    const { ProjectAccessCanAccess } = jest.requireMock("../users/ProjectAccess");
+    ProjectAccessCanAccess.mockResolvedValue(false);
+    const res = await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
+    expect(res.statusCode).toBe(403);
+    expect(previewPullMock).not.toHaveBeenCalled();
   });
 });

@@ -39,6 +39,11 @@ import {
   ResticSyncRestoreSnapshot,
 } from "../restic/SyncService";
 import {
+  ResticSyncPreviewDiscardLocalChanges,
+  ResticSyncPreviewPull,
+  ResticSyncPreviewRestoreSnapshot,
+} from "../restic/SyncPreview";
+import {
   SyncStatusCacheGet,
   SyncStatusCacheInvalidate,
 } from "../restic/SyncStatusCache";
@@ -230,7 +235,12 @@ export class ProjectsRoutes {
         return res.status(403).send({ error: "Access Denied" });
       }
       try {
-        const result = await ResticSyncPush(span, config, project);
+        const result = await ResticSyncPush(
+          span,
+          config,
+          project,
+          userSession.userName,
+        );
         SyncStatusCacheInvalidate(project.id);
         return res.status(200).send(result);
       } catch (e) {
@@ -320,6 +330,102 @@ export class ProjectsRoutes {
           );
           SyncStatusCacheInvalidate(project.id);
           return res.status(200).send(result);
+        } catch (e) {
+          return sendSyncError(res, e);
+        }
+      },
+    );
+
+    // Preview of a pull: the diff between the current project secrets and
+    // the content of the latest snapshot (no secret value is returned)
+    fastify.get<{ Params: { id: string } }>(
+      "/:id/preview/pull",
+      async (req, res) => {
+        const userSession = await AuthGetUserSession(req);
+        if (!userSession.isAuthenticated) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        const span = OTelRequestSpan(req);
+        const project = await ProjectsDataGet(span, req.params.id);
+        if (!project) {
+          return res.status(404).send({ error: "Project Not Found" });
+        }
+        if (
+          userSession.role !== "admin" &&
+          !(await ProjectAccessCanAccess(userSession, project.id))
+        ) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        try {
+          const preview = await ResticSyncPreviewPull(span, config, project);
+          return res.status(200).send({ preview });
+        } catch (e) {
+          return sendSyncError(res, e);
+        }
+      },
+    );
+
+    // Preview of a discard: the diff between the current project secrets
+    // and the content of the last synchronized snapshot
+    fastify.get<{ Params: { id: string } }>(
+      "/:id/preview/discard",
+      async (req, res) => {
+        const userSession = await AuthGetUserSession(req);
+        if (!userSession.isAuthenticated) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        const span = OTelRequestSpan(req);
+        const project = await ProjectsDataGet(span, req.params.id);
+        if (!project) {
+          return res.status(404).send({ error: "Project Not Found" });
+        }
+        if (
+          userSession.role !== "admin" &&
+          !(await ProjectAccessCanAccess(userSession, project.id))
+        ) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        try {
+          const preview = await ResticSyncPreviewDiscardLocalChanges(
+            span,
+            config,
+            project,
+          );
+          return res.status(200).send({ preview });
+        } catch (e) {
+          return sendSyncError(res, e);
+        }
+      },
+    );
+
+    // Preview of a snapshot restore: the diff between the current project
+    // secrets and the content of the given snapshot
+    fastify.get<{ Params: { id: string; snapshotId: string } }>(
+      "/:id/preview/snapshots/:snapshotId",
+      async (req, res) => {
+        const userSession = await AuthGetUserSession(req);
+        if (!userSession.isAuthenticated) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        const span = OTelRequestSpan(req);
+        const project = await ProjectsDataGet(span, req.params.id);
+        if (!project) {
+          return res.status(404).send({ error: "Project Not Found" });
+        }
+        if (
+          userSession.role !== "admin" &&
+          !(await ProjectAccessCanAccess(userSession, project.id))
+        ) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        try {
+          const preview = await ResticSyncPreviewRestoreSnapshot(
+            span,
+            config,
+            project,
+            req.params.snapshotId,
+          );
+          return res.status(200).send({ preview });
         } catch (e) {
           return sendSyncError(res, e);
         }

@@ -28,12 +28,14 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Before pushing, the application checks whether the repository contains a more recent snapshot than the last one synchronized by this project
 - [x] Push is rejected with a conflict error when a more recent snapshot exists (the user must pull first)
 - [x] After a successful push, the project records the new snapshot id and time
+- [x] The pushed snapshot is tagged with the pushing user (restic tag `pushed-by:<user>`)
 
 ## Pull (restore from restic repository)
 
 - [x] Pull restores the latest snapshot and replaces the project secrets with its content
 - [x] After a successful pull, the project records the snapshot id and time
 - [x] Pull fails with a clear error when the repository is empty
+- [x] A pull can be previewed before it is confirmed: the server computes the diff between the current project secrets and the latest snapshot content (secrets and keys added, changed or removed); no secret value is ever sent to the client, only statuses and value lengths
 
 ## Local changes detection
 
@@ -41,6 +43,7 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] A project is reported as having local changes not pushed when its current secrets differ from the last synchronized content
 - [x] A project that was never synchronized and holds at least one secret is reported as having local changes not pushed
 - [x] Projects synchronized before content-hash tracking was introduced report no local changes until the next push or pull records the baseline hash
+- [x] Discarding local changes can be previewed before it is confirmed: the server computes the diff between the current project secrets and the content of the last synchronized snapshot (409 when never synchronized, 404 when that snapshot no longer exists); no secret value is ever sent to the client
 
 ## Snapshot status and history
 
@@ -48,7 +51,10 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] The UI can list the snapshot history of a project repository (id and time, most recent first)
 - [x] Any snapshot of the history can be restored as the project secrets, after an explicit confirmation
 - [x] Restoring a snapshot replaces the project secrets and records the restored snapshot as the last synchronized state
+- [x] A snapshot restore can be previewed before it is confirmed: the server computes the diff between the current project secrets and the content of that snapshot (404 for an unknown snapshot); no secret value is ever sent to the client
 - [x] Local changes that were not pushed can be discarded: the last synchronized snapshot is restored, after an explicit confirmation
 - [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
+- [x] Snapshot history entries carry the pusher attribution: the `pushed-by:` restic tag when present, falling back to the user and host reported by restic; older snapshots carry no attribution
+- [x] Restic synchronization failures surface richer error context: the last 10 output lines, capped at 1000 characters (credentials never appear, they are passed via environment variables)
 
 Last spec review: 2026-10-17
