@@ -14,6 +14,12 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] A secret can be renamed; the new name follows the creation rules and must be unique within the project (validation and conflict errors shown inline)
 - [x] A key/value entry can be copied to another secret of the same project, the target secret and key name being chosen in a dialog (an existing target key is overwritten after an explicit warning)
 - [x] The secret list can be filtered by secret name or by key name (case-insensitive); filtering never hides the keys of an opened secret
+- [x] A key/value entry can be edited as a multiline value (e.g. certificates, private keys, JSON): a per-row toggle switches to a textarea, and pasting a multiline value into a single-line input switches the row to the multiline editor automatically (multiline values are displayed unmasked)
+- [x] A key/value entry can be copied to the clipboard from the editor, with the clipboard cleared automatically 30 seconds after the copy
+- [x] A saved secret can be copied to the clipboard as a .env file or as JSON from the secret action menu, with the same 30 seconds clipboard auto-clear
+- [x] On secret creation, .env or JSON content can be pasted and imported: it is parsed into key/value rows, replacing the current ones (duplicate keys keep the last value, reported as a warning; parse errors are shown inline)
+- [x] Closing the secret editor with unsaved changes (Cancel, ×, backdrop, Esc), leaving the page, or closing the browser tab asks for a confirmation before the edits are discarded
+- [x] Unsaved editor changes survive a session expiry: they are preserved before the redirect to the login page and the user is offered to restore them when back on the project page after re-login
 
 ## Push (backup to restic repository)
 
@@ -45,4 +51,4 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Local changes that were not pushed can be discarded: the last synchronized snapshot is restored, after an explicit confirmation
 - [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
 
-Last spec review: 2026-09-24
+Last spec review: 2026-10-17

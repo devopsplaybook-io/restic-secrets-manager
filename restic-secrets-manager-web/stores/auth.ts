@@ -18,6 +18,9 @@ interface JwtPayload {
   scopes: string[];
 }
 
+// The warning banner shows how long is left once this much time remains
+const SESSION_EXPIRY_WARNING_MS = 5 * 60 * 1000;
+
 export const useAuthStore = defineStore("auth", {
   state: () => ({
     token: localStorage.getItem("token") || "",
@@ -26,12 +29,23 @@ export const useAuthStore = defineStore("auth", {
       unknown
     > | null,
     initialized: false,
+    // Epoch milliseconds at which the current token expires (0 = unknown)
+    expiresAt: 0,
   }),
 
   getters: {
     isAuthenticated: (state) => !!state.token,
     isAdmin: (state) => state.user?.role === "admin",
     currentUser: (state) => state.user,
+    sessionMinutesRemaining: (state) => {
+      if (!state.expiresAt) {
+        return null;
+      }
+      return Math.max(0, Math.ceil((state.expiresAt - Date.now()) / 60000));
+    },
+    sessionExpiresSoon: (state) =>
+      state.expiresAt > 0 &&
+      state.expiresAt - Date.now() <= SESSION_EXPIRY_WARNING_MS,
   },
 
   actions: {
@@ -46,6 +60,7 @@ export const useAuthStore = defineStore("auth", {
           const decoded = jwtDecode<JwtPayload>(token);
           if (decoded.exp * 1000 > Date.now()) {
             this.token = token;
+            this.expiresAt = decoded.exp * 1000;
             this.user = {
               userId: decoded.userId,
               name: decoded.userName,
@@ -67,6 +82,11 @@ export const useAuthStore = defineStore("auth", {
       const res = await api.post("/users/session", { name, password });
       this.token = res.data.token;
       this.user = res.data.user;
+      try {
+        this.expiresAt = jwtDecode<JwtPayload>(this.token).exp * 1000;
+      } catch {
+        this.expiresAt = 0;
+      }
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(res.data.user));
       return res.data;
@@ -75,6 +95,7 @@ export const useAuthStore = defineStore("auth", {
     logout() {
       this.token = "";
       this.user = null;
+      this.expiresAt = 0;
       localStorage.removeItem("token");
       localStorage.removeItem("user");
     },

@@ -84,10 +84,10 @@
       </small>
     </article>
     <!-- SECRET EDITOR MODAL -->
-    <dialog v-if="showSecretModal" ref="secret-editor" @click.self="secretModal.close()" @close="onSecretModalClosed">
+    <dialog v-if="showSecretModal" ref="secret-editor" @click.self="requestCloseSecretModal" @cancel="onSecretModalCancel" @close="onSecretModalClosed">
       <article class="secret-editor">
         <header>
-          <button aria-label="Close" class="close-btn" @click="closeSecretModal"><i class="bi bi-x-lg"/></button>
+          <button aria-label="Close" class="close-btn" @click="requestCloseSecretModal"><i class="bi bi-x-lg"/></button>
           <h3>
             <i class="bi bi-key"/>
             {{ editingSecret ? `Edit Secret: ${editingSecret.name}` : "Add Secret" }}
@@ -105,25 +105,54 @@
             Key / Value Pairs
             <small class="text-muted">(values are edited as plain text, never as raw JSON)</small>
           </legend>
-          <div v-for="(row, index) in secretForm.rows" :key="index" class="key-value-row">
+          <div v-for="(row, index) in secretForm.rows" :key="index" class="key-value-row" :class="{ 'key-value-row--multiline': multilineRows.has(index) }">
             <input
               v-model="row.key"
               type="text"
               placeholder="KEY"
             >
             <div class="value-input">
+              <textarea
+                v-if="multilineRows.has(index)"
+                v-model="row.value"
+                rows="3"
+                class="multiline-value"
+                aria-label="Value (multiline)"
+              />
               <input
+                v-else
                 v-model="row.value"
                 :type="revealedRows.has(index) ? 'text' : 'password'"
                 placeholder="value"
+                @paste="onValuePaste($event, index)"
               >
               <button
+                v-if="!multilineRows.has(index)"
                 type="button"
                 class="icon-btn reveal-btn"
                 :title="revealedRows.has(index) ? 'Hide value' : 'Reveal value'"
                 @click="toggleReveal(index)"
               >
                 <i class="bi" :class="revealedRows.has(index) ? 'bi-eye-slash' : 'bi-eye'"/>
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                :title="multilineRows.has(index) ? 'Switch to single-line value' : 'Switch to multiline value'"
+                aria-label="Toggle multiline value"
+                @click="toggleMultiline(index)"
+              >
+                <i class="bi bi-card-text"/>
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                :disabled="row.value.length === 0"
+                :title="copiedRows.has(index) ? 'Copied' : 'Copy value (cleared from the clipboard after 30 s)'"
+                aria-label="Copy value"
+                @click="copyRowValue(index)"
+              >
+                <i class="bi" :class="copiedRows.has(index) ? 'bi-clipboard-check' : 'bi-clipboard'"/>
               </button>
             </div>
             <ActionMenu
@@ -139,13 +168,37 @@
           </div>
         </fieldset>
 
+        <details v-if="!editingSecret" class="import-block">
+          <summary><i class="bi bi-box-arrow-in-down"/> Import from .env or JSON</summary>
+          <label>
+            Paste .env or JSON content
+            <textarea
+              v-model="importText"
+              rows="5"
+              placeholder="KEY=value lines or a flat JSON object"
+            />
+          </label>
+          <div v-if="importError" class="error-message">{{ importError }}</div>
+          <div v-if="importWarnings.length > 0" class="warning-message">
+            <div v-for="warning in importWarnings" :key="warning">
+              <i class="bi bi-exclamation-triangle-fill"/> {{ warning }}
+            </div>
+          </div>
+          <div class="import-actions">
+            <button type="button" class="secondary" @click="importSecretRows">
+              <i class="bi bi-box-arrow-in-down"/> Import
+            </button>
+            <small class="text-muted">Replaces the current key/value rows; duplicate keys keep the last value.</small>
+          </div>
+        </details>
+
         <div v-if="secretError" class="error-message">{{ secretError }}</div>
 
         <footer class="dialog-footer">
           <button class="secondary footer-home" @click="backToHome">
             <i class="bi bi-house"/> Home
           </button>
-          <button class="secondary" @click="closeSecretModal">Cancel</button>
+          <button class="secondary" @click="requestCloseSecretModal">Cancel</button>
           <button :disabled="savingSecret" @click="saveSecret">
             {{ savingSecret ? "Saving…" : "Save" }}
           </button>
@@ -284,11 +337,55 @@
         </footer>
       </article>
     </dialog>
+
+    <!-- UNSAVED CHANGES CONFIRM MODAL -->
+    <dialog v-if="showUnsavedConfirm" ref="unsaved-changes" @click.self="unsavedModal.close()" @close="onUnsavedModalClosed">
+      <article>
+        <header>
+          <button aria-label="Close" class="close-btn" @click="unsavedModal.close()"><i class="bi bi-x-lg"/></button>
+          <h3><i class="bi bi-exclamation-triangle-fill"/> Unsaved changes</h3>
+        </header>
+        <p>Discard unsaved changes?</p>
+        <footer>
+          <button class="secondary" @click="keepEditingUnsavedChanges">Keep editing</button>
+          <button class="contrast" @click="discardUnsavedChanges">
+            Discard
+          </button>
+        </footer>
+      </article>
+    </dialog>
+
+    <!-- RESTORE UNSAVED EDITS MODAL -->
+    <dialog v-if="showRestoreModal" ref="restore-draft" @click.self="restoreModal.close()" @close="onRestoreModalClosed">
+      <article>
+        <header>
+          <button aria-label="Close" class="close-btn" @click="restoreModal.close()"><i class="bi bi-x-lg"/></button>
+          <h3><i class="bi bi-arrow-counterclockwise"/> Restore unsaved edits</h3>
+        </header>
+        <p v-if="pendingDraft">
+          Restore unsaved edits from
+          <strong>{{ formatTime(pendingDraft.savedAt) }}</strong> (secret
+          <strong>{{ pendingDraft.name || "unnamed" }}</strong>)?
+        </p>
+        <footer>
+          <button class="secondary" @click="discardDraftRestore">Discard</button>
+          <button @click="restoreDraftEdits">Restore</button>
+        </footer>
+      </article>
+    </dialog>
   </div>
 </template>
 
 <script setup>
-import api from "../../utils/api";
+import api, { registerUnsavedEditsCapture } from "../../utils/api";
+import { copyTextToClipboardWithAutoClear } from "../../utils/clipboard";
+import { parseSecretImport } from "../../utils/secret-import";
+import { secretToEnvContent, secretToJsonContent } from "../../utils/secret-export";
+import {
+  saveSecretDraft,
+  loadSecretDraft,
+  clearSecretDraft,
+} from "../../utils/secret-draft";
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
@@ -319,6 +416,27 @@ const savingSecret = ref(false);
 const secretForm = ref({ name: "", rows: [] });
 const secretError = ref("");
 const revealedRows = ref(new Set());
+const multilineRows = ref(new Set());
+const copiedRows = ref(new Set());
+
+// Unsaved-changes detection: view state (reveal/multiline) is excluded
+const savedSnapshot = ref("");
+
+function snapshotForm() {
+  return JSON.stringify({
+    name: secretForm.value.name,
+    rows: secretForm.value.rows,
+  });
+}
+
+const isDirty = computed(() => snapshotForm() !== savedSnapshot.value);
+
+function resetFormEditorState() {
+  secretForm.value = { name: "", rows: [] };
+  revealedRows.value = new Set();
+  multilineRows.value = new Set();
+  savedSnapshot.value = snapshotForm();
+}
 
 const deleteModal = useModalDialog("delete-confirm");
 const showDeleteConfirm = deleteModal.isOpen;
@@ -333,7 +451,33 @@ onMounted(async () => {
   }
   await loadProject();
   await loadSecrets();
+  offerDraftRestore();
 });
+
+onUnmounted(() => {
+  unregisterUnsavedEditsCapture();
+  window.removeEventListener("beforeunload", onBeforeUnload);
+});
+
+// Lost-work protection: on a 403 session expiry the API layer invokes this
+// hook before redirecting to /login, so the unsaved editor content is stored
+// in sessionStorage and can be restored after re-login.
+function captureUnsavedEdits() {
+  if (!showSecretModal.value || !isDirty.value) {
+    return;
+  }
+  saveSecretDraft({
+    projectId: String(route.params.id),
+    secretId: editingSecret.value?.id ?? null,
+    name: editingSecret.value?.name ?? secretForm.value.name,
+    rows: secretForm.value.rows.map((row) => ({ key: row.key, value: row.value })),
+    savedAt: new Date().toISOString(),
+  });
+}
+
+const unregisterUnsavedEditsCapture = registerUnsavedEditsCapture(
+  captureUnsavedEdits,
+);
 
 async function loadProject() {
   try {
@@ -365,6 +509,8 @@ function formatTime(iso) {
 
 const secretMenuItems = [
   { key: "edit", label: "Edit", icon: "bi-pencil-fill" },
+  { key: "copy-env", label: "Copy as .env", icon: "bi-file-earmark-code" },
+  { key: "copy-json", label: "Copy as JSON", icon: "bi-filetype-json" },
   { key: "duplicate", label: "Duplicate", icon: "bi-copy" },
   { key: "rename", label: "Rename", icon: "bi-input-cursor-text" },
   { key: "delete", label: "Delete", icon: "bi-trash3-fill", danger: true },
@@ -378,12 +524,34 @@ const keyMenuItems = [
 function onSecretAction(secret, action) {
   if (action === "edit") {
     openEditSecret(secret);
+  } else if (action === "copy-env") {
+    copySecretAs(secret, "env");
+  } else if (action === "copy-json") {
+    copySecretAs(secret, "json");
   } else if (action === "duplicate") {
     openDuplicateSecret(secret);
   } else if (action === "rename") {
     openRenameSecret(secret);
   } else if (action === "delete") {
     confirmDeleteSecret(secret);
+  }
+}
+
+async function copySecretAs(secret, format) {
+  const entries = Object.keys(secret.data).map((key) => ({
+    key,
+    value: secret.data[key],
+  }));
+  const content =
+    format === "env"
+      ? secretToEnvContent(entries)
+      : secretToJsonContent(entries);
+  const copied = await copyTextToClipboardWithAutoClear(content);
+  if (!copied) {
+    error.value =
+      format === "env"
+        ? `Unable to copy the secret ${secret.name} as .env`
+        : `Unable to copy the secret ${secret.name} as JSON`;
   }
 }
 
@@ -402,6 +570,11 @@ function openCreateSecret() {
   secretForm.value = { name: "", rows: [{ key: "", value: "" }] };
   secretError.value = "";
   revealedRows.value = new Set();
+  multilineRows.value = new Set();
+  importText.value = "";
+  importError.value = "";
+  importWarnings.value = [];
+  savedSnapshot.value = snapshotForm();
   secretModal.open();
 }
 
@@ -413,7 +586,41 @@ function openEditSecret(secret) {
   };
   secretError.value = "";
   revealedRows.value = new Set();
+  multilineRows.value = multilineIndices(secretForm.value.rows);
+  savedSnapshot.value = snapshotForm();
   secretModal.open();
+}
+
+// Rows holding a multiline value are edited in a textarea (a single-line
+// input would drop the newlines)
+function multilineIndices(rows) {
+  const set = new Set();
+  rows.forEach((row, index) => {
+    if (row.value.includes("\n")) {
+      set.add(index);
+    }
+  });
+  return set;
+}
+
+// User-initiated close (Cancel, ×, backdrop, Esc): ask for confirmation
+// before discarding unsaved edits
+function requestCloseSecretModal() {
+  if (isDirty.value) {
+    secretError.value = "";
+    pendingCloseAction = () => secretModal.close();
+    unsavedModal.open();
+  } else {
+    secretModal.close();
+  }
+}
+
+// Esc on the secret editor dialog: keep it open while unsaved edits remain
+function onSecretModalCancel(event) {
+  if (isDirty.value) {
+    event.preventDefault();
+    requestCloseSecretModal();
+  }
 }
 
 function closeSecretModal() {
@@ -424,12 +631,136 @@ function closeSecretModal() {
 function onSecretModalClosed() {
   secretModal.onClose();
   editingSecret.value = null;
+  resetFormEditorState();
 }
 
-// Leave the secret editor and go back to the home page without saving
+// Leave the secret editor and go back to the home page: the route-leave
+// guard asks for confirmation when unsaved edits remain
 function backToHome() {
-  secretModal.close();
   router.push("/");
+}
+
+// Unsaved-changes confirmation
+
+const unsavedModal = useModalDialog("unsaved-changes");
+const showUnsavedConfirm = unsavedModal.isOpen;
+let pendingCloseAction = null;
+let resolveRouteLeave = null;
+
+function discardUnsavedChanges() {
+  unsavedModal.close();
+  const resolve = resolveRouteLeave;
+  const action = pendingCloseAction;
+  resolveRouteLeave = null;
+  pendingCloseAction = null;
+  if (resolve) {
+    resolve(true);
+  } else if (action) {
+    action();
+  }
+}
+
+function keepEditingUnsavedChanges() {
+  unsavedModal.close();
+  const resolve = resolveRouteLeave;
+  resolveRouteLeave = null;
+  pendingCloseAction = null;
+  if (resolve) {
+    resolve(false);
+  }
+}
+
+function onUnsavedModalClosed() {
+  unsavedModal.onClose();
+  // Closing the confirmation by any other means (Esc, ×, backdrop) keeps the
+  // editor open and cancels a pending navigation
+  const resolve = resolveRouteLeave;
+  resolveRouteLeave = null;
+  pendingCloseAction = null;
+  if (resolve) {
+    resolve(false);
+  }
+}
+
+onBeforeRouteLeave(() => {
+  if (!isDirty.value) {
+    return true;
+  }
+  secretError.value = "";
+  unsavedModal.open();
+  return new Promise((resolve) => {
+    resolveRouteLeave = resolve;
+  });
+});
+
+function onBeforeUnload(event) {
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+watch(isDirty, (dirty) => {
+  if (dirty) {
+    window.addEventListener("beforeunload", onBeforeUnload);
+  } else {
+    window.removeEventListener("beforeunload", onBeforeUnload);
+  }
+});
+
+// Restore unsaved edits captured before a session expiry
+
+const restoreModal = useModalDialog("restore-draft");
+const showRestoreModal = restoreModal.isOpen;
+const pendingDraft = ref(null);
+
+function offerDraftRestore() {
+  const draft = loadSecretDraft();
+  if (draft && draft.projectId === String(route.params.id)) {
+    pendingDraft.value = draft;
+    restoreModal.open();
+  }
+}
+
+function discardDraftRestore() {
+  restoreModal.close();
+  pendingDraft.value = null;
+  clearSecretDraft();
+}
+
+function restoreDraftEdits() {
+  const draft = pendingDraft.value;
+  restoreModal.close();
+  pendingDraft.value = null;
+  clearSecretDraft();
+  if (!draft) {
+    return;
+  }
+  const secret = draft.secretId
+    ? secrets.value.find((item) => item.id === draft.secretId) ?? null
+    : null;
+  if (secret) {
+    editingSecret.value = secret;
+    secretForm.value = {
+      name: secret.name,
+      rows: draft.rows.map((row) => ({ key: row.key, value: row.value })),
+    };
+  } else {
+    // The secret no longer exists: restore as a new secret, name prefilled
+    editingSecret.value = null;
+    secretForm.value = {
+      name: draft.name,
+      rows: draft.rows.map((row) => ({ key: row.key, value: row.value })),
+    };
+  }
+  secretError.value = "";
+  revealedRows.value = new Set();
+  multilineRows.value = multilineIndices(secretForm.value.rows);
+  savedSnapshot.value = snapshotForm();
+  secretModal.open();
+}
+
+function onRestoreModalClosed() {
+  restoreModal.onClose();
+  pendingDraft.value = null;
 }
 
 function addRow() {
@@ -448,6 +779,82 @@ function toggleReveal(index) {
     set.add(index);
   }
   revealedRows.value = set;
+}
+
+function toggleMultiline(index) {
+  const set = new Set(multilineRows.value);
+  if (set.has(index)) {
+    set.delete(index);
+    // Values are masked again when returning to a single-line input
+    const revealed = new Set(revealedRows.value);
+    revealed.delete(index);
+    revealedRows.value = revealed;
+  } else {
+    set.add(index);
+  }
+  multilineRows.value = set;
+}
+
+// A multiline paste would lose its newlines in a single-line input: switch
+// the row to the multiline editor and keep the pasted text as-is
+function onValuePaste(event, index) {
+  const text = event.clipboardData?.getData("text") ?? "";
+  if (text.includes("\n")) {
+    event.preventDefault();
+    secretForm.value.rows[index].value = text;
+    const set = new Set(multilineRows.value);
+    set.add(index);
+    multilineRows.value = set;
+  }
+}
+
+let copiedRowsTimer = null;
+
+async function copyRowValue(index) {
+  const row = secretForm.value.rows[index];
+  if (!row || row.value.length === 0) {
+    return;
+  }
+  const copied = await copyTextToClipboardWithAutoClear(row.value);
+  if (!copied) {
+    secretError.value = "Unable to copy the value to the clipboard";
+    return;
+  }
+  const set = new Set(copiedRows.value);
+  set.add(index);
+  copiedRows.value = set;
+  if (copiedRowsTimer) {
+    clearTimeout(copiedRowsTimer);
+  }
+  copiedRowsTimer = setTimeout(() => {
+    copiedRows.value = new Set();
+  }, 1500);
+}
+
+// Import from .env or JSON (secret creation only)
+
+const importText = ref("");
+const importError = ref("");
+const importWarnings = ref([]);
+
+function importSecretRows() {
+  importError.value = "";
+  importWarnings.value = [];
+  let result;
+  try {
+    result = parseSecretImport(importText.value);
+  } catch (e) {
+    importError.value = e instanceof Error ? e.message : "Unable to parse the pasted content";
+    return;
+  }
+  if (result.rows.length === 0) {
+    importError.value = "Nothing to import: no entries found";
+    return;
+  }
+  secretForm.value.rows = result.rows.map((row) => ({ key: row.key, value: row.value }));
+  revealedRows.value = new Set();
+  multilineRows.value = multilineIndices(secretForm.value.rows);
+  importWarnings.value = result.warnings;
 }
 
 async function saveSecret() {
@@ -480,6 +887,7 @@ async function saveSecret() {
       });
     }
     closeSecretModal();
+    clearSecretDraft();
     await loadSecrets();
   } catch (e) {
     secretError.value = e.response?.data?.error || "Unable to save the secret";
@@ -785,9 +1193,43 @@ async function executeCopyKey() {
   margin-bottom: var(--space-xs);
 }
 
+.key-value-row--multiline {
+  align-items: start;
+}
+
+.multiline-value {
+  width: 100%;
+  min-height: 6em;
+  resize: vertical;
+}
+
+.import-block {
+  margin-bottom: var(--space-md);
+}
+
+.import-block summary {
+  cursor: pointer;
+  font-weight: var(--weight-semibold);
+}
+
+.import-block label {
+  margin-top: var(--space-sm);
+}
+
+.import-actions {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.import-actions .secondary {
+  justify-self: start;
+}
+
 .value-input {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto auto;
   gap: 0;
   align-items: center;
 }

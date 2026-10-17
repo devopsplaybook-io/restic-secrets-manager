@@ -97,12 +97,28 @@ async function handleSubmit() {
       await api.post("/users", { name: name.value, password: password.value });
     }
     await authStore.login(name.value, password.value);
-    router.push("/");
+    router.push(postLoginPath());
   } catch (e) {
     error.value = e.response?.data?.error || "An error occurred";
   } finally {
     loading.value = false;
   }
+}
+
+// After a session-expiry redirect, send the user back to the page they were
+// working on (same-site paths only)
+function postLoginPath() {
+  let redirect = null;
+  try {
+    redirect = sessionStorage.getItem("redirectAfterLogin");
+    sessionStorage.removeItem("redirectAfterLogin");
+  } catch {
+    return "/";
+  }
+  if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
+    return redirect;
+  }
+  return "/";
 }
 </script>
 

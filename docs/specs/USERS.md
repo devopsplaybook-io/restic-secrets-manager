@@ -5,6 +5,8 @@
 - [x] Users authenticate with username and password, receiving a JWT token
 - [x] Sessions last 1 hour (`JWT_VALIDITY_DURATION` defaults to `3600` seconds)
 - [x] Sessions are never auto-renewed: the web UI does not refresh or extend tokens; when the token expires the user must log in again
+- [x] Shortly before a session expires (5 minutes or less remaining), the UI warns the user and invites them to save their work
+- [x] Unsaved secret editor changes are preserved across a session expiry and can be restored after re-login; the session model itself is unchanged
 - [x] First user created becomes admin (first-run initialization)
 - [x] Passwords are stored hashed (bcrypt)
 
@@ -22,4 +24,4 @@
 - [x] Access is granted/revoked by admins from the user management UI
 - [x] Access changes take effect immediately (authorization is checked against the database, not the token)
 
-Last spec review: 2026-09-13
+Last spec review: 2026-10-17
