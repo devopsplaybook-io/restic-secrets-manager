@@ -26,6 +26,10 @@
               <span v-if="index === 0" class="latest-tag">latest</span>
             </div>
             <small class="text-muted mono">{{ shortId(snapshot.id) }}</small>
+            <div class="timeline-pusher">
+              <i class="bi bi-person"/>
+              <small class="text-muted">Pushed by {{ pusherLabel(snapshot) }}</small>
+            </div>
             <div class="timeline-actions">
               <button class="secondary" :disabled="restoring" @click="askRestore(snapshot)">
                 <i class="bi bi-arrow-counterclockwise"/> Restore
@@ -37,9 +41,14 @@
                 replaced with the content of snapshot
                 <strong>{{ shortId(snapshot.id) }}</strong>.
               </p>
+              <div v-if="previewLoading" class="loading-state">
+                <i class="bi bi-arrow-repeat spin"/> Computing preview…
+              </div>
+              <div v-else-if="previewError" class="error-message">{{ previewError }}</div>
+              <SyncPreviewRows v-else-if="restorePreview" :preview="restorePreview"/>
               <div class="confirm-actions">
-                <button class="secondary" :disabled="restoring" @click="confirming = ''">Cancel</button>
-                <button class="contrast" :disabled="restoring" @click="restoreSnapshot(snapshot)">
+                <button class="secondary" :disabled="restoring" @click="cancelRestore">Cancel</button>
+                <button class="contrast" :disabled="restoring || previewLoading || !restorePreview" @click="restoreSnapshot(snapshot)">
                   {{ restoring ? "Restoring…" : "Restore" }}
                 </button>
               </div>
@@ -61,6 +70,7 @@
 
 <script setup>
 import api from "../utils/api";
+import { pusherLabel } from "../utils/sync-preview";
 
 const props = defineProps({
   project: { type: Object, required: true },
@@ -74,6 +84,9 @@ const error = ref("");
 const confirming = ref("");
 const restoring = ref(false);
 const restoredMessage = ref("");
+const previewLoading = ref(false);
+const previewError = ref("");
+const restorePreview = ref(null);
 
 onMounted(async () => {
   modal.open();
@@ -102,8 +115,28 @@ async function loadSnapshots() {
   }
 }
 
-function askRestore(snapshot) {
+async function askRestore(snapshot) {
   confirming.value = snapshot.id;
+  restorePreview.value = null;
+  previewError.value = "";
+  previewLoading.value = true;
+  try {
+    const res = await api.get(
+      `/projects/${props.project.id}/preview/snapshots/${snapshot.id}`,
+    );
+    restorePreview.value = res.data.preview;
+  } catch (e) {
+    previewError.value =
+      e.response?.data?.error || "Unable to compute the change preview";
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
+function cancelRestore() {
+  confirming.value = "";
+  restorePreview.value = null;
+  previewError.value = "";
 }
 
 async function restoreSnapshot(snapshot) {
@@ -113,7 +146,7 @@ async function restoreSnapshot(snapshot) {
     const res = await api.post(
       `/projects/${props.project.id}/snapshots/${snapshot.id}/restore`,
     );
-    confirming.value = "";
+    cancelRestore();
     restoredMessage.value = `Restored snapshot ${shortId(res.data.snapshotId)}: ${res.data.secrets} secret(s) and ${res.data.keys} key(s).`;
     emit("restored");
   } catch (e) {
@@ -222,6 +255,13 @@ function shortId(id) {
   word-break: break-all;
 }
 
+.timeline-pusher {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  color: var(--color-text-muted);
+}
+
 .timeline-actions {
   display: flex;
 }
@@ -231,9 +271,15 @@ function shortId(id) {
   border-radius: var(--radius-sm);
   padding: var(--space-sm);
   background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  display: grid;
+  gap: var(--space-sm);
 }
 .timeline-confirm p {
-  margin: 0 0 var(--space-sm) 0;
+  margin: 0;
+}
+
+.timeline-confirm .loading-state {
+  padding: 0;
 }
 
 .confirm-actions {

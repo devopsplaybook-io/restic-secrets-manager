@@ -6,6 +6,8 @@ import {
   ResticCommandResult,
   ResticRunner,
   ResticSnapshot,
+  sanitizePusherTag,
+  sanitizeResticError,
 } from "./ResticClient";
 
 function makeProject(): Project {
@@ -141,6 +143,100 @@ describe("ResticClient backup", () => {
     const client = new ResticClient(makeProject(), runner);
     await expect(client.backup("/tmp/secrets")).rejects.toThrow(
       "Unable to push secrets to the restic repository: lock failed",
+    );
+  });
+
+  it("should tag the snapshot with the pushing user", async () => {
+    const captured: { args: string[] }[] = [];
+    const runner: ResticRunner = async (_command, args) => {
+      captured.push({ args });
+      return result({ stdout: "snapshot saved" });
+    };
+    const client = new ResticClient(makeProject(), runner);
+    await client.backup("/tmp/secrets", "alice");
+    expect(captured[0].args.slice(-8)).toEqual([
+      "backup",
+      "--group-by",
+      "paths",
+      "--tag",
+      "restic-secrets-manager",
+      "--tag",
+      "pushed-by:alice",
+      ".",
+    ]);
+  });
+
+  it("should sanitize the pushing user tag", async () => {
+    const captured: { args: string[] }[] = [];
+    const runner: ResticRunner = async (_command, args) => {
+      captured.push({ args });
+      return result({ stdout: "snapshot saved" });
+    };
+    const client = new ResticClient(makeProject(), runner);
+    await client.backup("/tmp/secrets", "alice smith, jr\n");
+    expect(captured[0].args).toContain("pushed-by:alice-smith-jr");
+  });
+
+  it("should add no pusher tag when the user sanitizes to an empty tag", async () => {
+    const captured: { args: string[] }[] = [];
+    const runner: ResticRunner = async (_command, args) => {
+      captured.push({ args });
+      return result({ stdout: "snapshot saved" });
+    };
+    const client = new ResticClient(makeProject(), runner);
+    await client.backup("/tmp/secrets", " , ");
+    expect(captured[0].args.join(" ")).not.toContain("pushed-by:");
+  });
+});
+
+describe("sanitizePusherTag", () => {
+  it("should return an empty tag for an undefined or empty user", () => {
+    expect(sanitizePusherTag(undefined)).toBe("");
+    expect(sanitizePusherTag("")).toBe("");
+  });
+
+  it("should keep a plain user name untouched", () => {
+    expect(sanitizePusherTag("alice")).toBe("alice");
+    expect(sanitizePusherTag("alice.smith-2")).toBe("alice.smith-2");
+  });
+
+  it("should replace whitespace, commas and control characters with dashes", () => {
+    expect(sanitizePusherTag("alice bob,carol")).toBe("alice-bob-carol");
+    expect(sanitizePusherTag("  alice  ")).toBe("alice");
+    expect(sanitizePusherTag("alice\nsmith")).toBe("alice-smith");
+    expect(sanitizePusherTag("alice\u0000smith")).toBe("alice-smith");
+  });
+
+  it("should cap the tag to 100 characters without trailing dash", () => {
+    const tag = sanitizePusherTag("a".repeat(120));
+    expect(tag).toHaveLength(100);
+    expect(tag).toBe("a".repeat(100));
+    const dashed = sanitizePusherTag(`${"a".repeat(99)}-`);
+    expect(dashed).toHaveLength(99);
+  });
+});
+
+describe("sanitizeResticError", () => {
+  it("should keep the last 10 lines of the output", () => {
+    const lines = Array.from({ length: 15 }, (_, i) => `line-${i + 1}`);
+    const message = sanitizeResticError(
+      result({ code: 1, stderr: lines.join("\n") }),
+    );
+    expect(message).toContain("line-15");
+    expect(message).toContain("line-6");
+    expect(message).not.toContain("line-5");
+  });
+
+  it("should cap the message to 1000 characters", () => {
+    const message = sanitizeResticError(
+      result({ code: 1, stderr: "x".repeat(2000) }),
+    );
+    expect(message).toHaveLength(1000);
+  });
+
+  it("should report the exit code when there is no output", () => {
+    expect(sanitizeResticError(result({ code: 3 }))).toBe(
+      "restic exited with code 3",
     );
   });
 });

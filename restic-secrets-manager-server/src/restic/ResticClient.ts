@@ -140,19 +140,21 @@ export class ResticClient {
   }
 
   /** Back up the given directory (must be run with cwd set to it). */
-  public async backup(dir: string): Promise<void> {
-    const result = await this.run(
-      [
-        ...this.baseArgs(),
-        "backup",
-        "--group-by",
-        "paths",
-        "--tag",
-        "restic-secrets-manager",
-        ".",
-      ],
-      dir,
-    );
+  public async backup(dir: string, pushedBy?: string): Promise<void> {
+    const args = [
+      ...this.baseArgs(),
+      "backup",
+      "--group-by",
+      "paths",
+      "--tag",
+      "restic-secrets-manager",
+    ];
+    const pusherTag = sanitizePusherTag(pushedBy);
+    if (pusherTag) {
+      args.push("--tag", `pushed-by:${pusherTag}`);
+    }
+    args.push(".");
+    const result = await this.run(args, dir);
     if (result.code !== 0) {
       throw new Error(
         `Unable to push secrets to the restic repository: ${sanitizeResticError(result)}`,
@@ -219,5 +221,28 @@ export function sanitizeResticError(result: ResticCommandResult): string {
     return `restic exited with code ${result.code}`;
   }
   const lines = output.split("\n").filter((l) => l.trim().length > 0);
-  return lines.slice(-3).join(" ").substring(0, 500);
+  return lines.slice(-10).join(" ").substring(0, 1000);
 }
+
+/**
+ * Restic tags cannot contain commas or whitespace (they are list
+ * separators and are normalized away): they are replaced with dashes and
+ * the result is trimmed and capped to 100 characters. An empty result
+ * means no pusher tag should be added.
+ */
+export function sanitizePusherTag(pushedBy?: string): string {
+  if (!pushedBy) {
+    return "";
+  }
+  const sanitized = pushedBy
+    .replace(TAG_SEPARATOR_PATTERN, "-")
+    .replace(/^-+|-+$/g, "")
+    .substring(0, 100)
+    .replace(/^-+|-+$/g, "");
+  return sanitized;
+}
+
+// Whitespace, commas and control characters cannot be part of a restic tag
+// (commas separate tag lists): they are normalized to dashes.
+// eslint-disable-next-line no-control-regex
+const TAG_SEPARATOR_PATTERN = /[\s,\u0000-\u001f\u007f]+/g;

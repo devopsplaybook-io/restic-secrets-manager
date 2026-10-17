@@ -27,14 +27,18 @@
 ## Home page (Projects)
 
 - [x] A project card shows a badge when secrets were modified locally but not pushed yet, with a Discard action
-- [x] Discarding the local changes asks for confirmation before restoring the last synchronized snapshot
+- [x] The "local changes not pushed" badge is a "Review changes" action: it opens a preview of the diff that discarding would restore (secrets and keys added, changed or removed, values masked), and the Discard action confirms through the same preview
+- [x] Discarding the local changes shows a preview of the changes before the last synchronized snapshot is restored, and only executes after confirmation
+- [x] The Pull action opens a preview of the changes the pull would apply (values masked) and only executes after confirmation
 - [x] After the projects load, the UI checks each project for remote changes to pull and shows a badge when the repository holds a more recent snapshot (checking state shown while in progress, degraded to "check failed" on error)
 - [x] A History button per project card opens the snapshot history
 
 ## Snapshot history
 
 - [x] The snapshot history shows a vertical timeline of the repository snapshots (time and short id, most recent first, latest highlighted)
+- [x] Each timeline entry shows who pushed the snapshot: the `pushed-by` attribution, falling back to the user and host reported by restic, or "unknown pusher" for older snapshots
 - [x] Each timeline entry offers a Restore action, confirmed before the snapshot replaces the project secrets
+- [x] The restore confirmation shows a preview of the changes the restore would apply (values masked) and only executes after confirmation
 - [x] The result of a restore is displayed in the history dialog and the project cards are refreshed
 
 ## Project detail (secrets)

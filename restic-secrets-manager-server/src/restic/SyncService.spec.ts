@@ -12,6 +12,7 @@ import {
   importPulledSecrets,
   ResticSyncDiscardLocalChanges,
   ResticSyncError,
+  ResticSyncListSnapshots,
   ResticSyncPull,
   ResticSyncPush,
   ResticSyncRestoreSnapshot,
@@ -307,7 +308,13 @@ describe("ResticSyncPush", () => {
     };
 
     const project = makeProject();
-    const result = await ResticSyncPush(span(), testConfig(), project, dataApi);
+    const result = await ResticSyncPush(
+      span(),
+      testConfig(),
+      project,
+      undefined,
+      dataApi,
+    );
 
     expect(client.backup).toHaveBeenCalled();
     expect(result.snapshotId).toBe("snapshot-2");
@@ -317,6 +324,30 @@ describe("ResticSyncPush", () => {
       "snapshot-2",
       "2026-02-01T10:00:00Z",
       computeSecretsHash(secrets),
+    );
+  });
+
+  it("should forward the pushing user to the restic backup", async () => {
+    const client = mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+    });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+    await ResticSyncPush(
+      span(),
+      testConfig(),
+      makeProject(),
+      "alice",
+      dataApi,
+    );
+    expect(client.backup).toHaveBeenCalledWith(
+      expect.stringContaining("secrets"),
+      "alice",
     );
   });
 
@@ -360,8 +391,8 @@ describe("ResticSyncPush", () => {
 
     // Both routes read the project before acquiring the sync lock
     const [first, second] = await Promise.all([
-      ResticSyncPush(span(), testConfig(), makeProject(), dataApi),
-      ResticSyncPush(span(), testConfig(), makeProject(), dataApi),
+      ResticSyncPush(span(), testConfig(), makeProject(), undefined, dataApi),
+      ResticSyncPush(span(), testConfig(), makeProject(), undefined, dataApi),
     ]);
 
     expect(dataApi.ProjectsDataGet).toHaveBeenCalledTimes(2);
@@ -393,7 +424,7 @@ describe("ResticSyncPush", () => {
     });
 
     try {
-      await ResticSyncPush(span(), testConfig(), stale, dataApi);
+      await ResticSyncPush(span(), testConfig(), stale, undefined, dataApi);
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(ResticSyncError);
@@ -589,5 +620,41 @@ describe("ResticSyncDiscardLocalChanges", () => {
       expect.any(String),
     );
     expect(result.snapshotId).toBe("snapshot-1");
+  });
+});
+
+describe("ResticSyncListSnapshots", () => {
+  it("should return the snapshots most recent first with the pusher attribution", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        {
+          id: "snapshot-1",
+          time: "2026-01-01T10:00:00Z",
+          tags: ["restic-secrets-manager", "pushed-by:alice"],
+          username: "root",
+          hostname: "old-host",
+        },
+        {
+          id: "snapshot-2",
+          time: "2026-02-01T10:00:00Z",
+          username: "bob",
+          hostname: "laptop",
+        },
+        { id: "snapshot-3", time: "2026-03-01T10:00:00Z" },
+      ]),
+    });
+
+    const snapshots = await ResticSyncListSnapshots(makeProject());
+
+    expect(snapshots.map((s) => s.id)).toEqual([
+      "snapshot-3",
+      "snapshot-2",
+      "snapshot-1",
+    ]);
+    expect(snapshots[2].pushedBy).toBe("alice");
+    expect(snapshots[1].pushedBy).toBe("bob@laptop");
+    expect(snapshots[0].pushedBy).toBeUndefined();
+    expect(snapshots[2].username).toBe("root");
+    expect(snapshots[2].hostname).toBe("old-host");
   });
 });
