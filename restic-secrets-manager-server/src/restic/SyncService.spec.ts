@@ -17,6 +17,7 @@ import {
   ResticSyncPush,
   ResticSyncRestoreSnapshot,
   ResticSyncStatus,
+  ResticSyncTestConnection,
 } from "./SyncService";
 
 jest.mock("./ResticClient", () => {
@@ -520,6 +521,68 @@ describe("ResticSyncStatus", () => {
     const status = await ResticSyncStatus(span(), makeProject(), dataApi);
     expect(status.needsPull).toBe(false);
     expect(status.remoteLatestSnapshotId).toBe("");
+  });
+});
+
+describe("ResticSyncTestConnection", () => {
+  it("should map an empty repository", async () => {
+    mockClient({
+      testConnection: jest.fn().mockResolvedValue({ status: "empty" }),
+    });
+    expect(await ResticSyncTestConnection(makeProject())).toEqual({
+      status: "empty",
+      message: "Repository is empty: it will be initialized on the first push",
+    });
+  });
+
+  it("should map a successful connection with its snapshot count", async () => {
+    mockClient({
+      testConnection: jest.fn().mockResolvedValue({
+        status: "ok",
+        snapshotCount: 3,
+        latestSnapshotTime: "2026-02-01T10:00:00Z",
+      }),
+    });
+    expect(await ResticSyncTestConnection(makeProject())).toEqual({
+      status: "ok",
+      message: "Connection successful: 3 snapshots found",
+      snapshotCount: 3,
+      latestSnapshotTime: "2026-02-01T10:00:00Z",
+    });
+  });
+
+  it("should map a single snapshot without pluralization", async () => {
+    mockClient({
+      testConnection: jest.fn().mockResolvedValue({
+        status: "ok",
+        snapshotCount: 1,
+        latestSnapshotTime: "2026-01-01T10:00:00Z",
+      }),
+    });
+    const result = await ResticSyncTestConnection(makeProject());
+    expect(result.message).toBe("Connection successful: 1 snapshot found");
+  });
+
+  it("should map an error with its sanitized message", async () => {
+    mockClient({
+      testConnection: jest.fn().mockResolvedValue({
+        status: "error",
+        message: "unable to access bucket: access denied",
+      }),
+    });
+    expect(await ResticSyncTestConnection(makeProject())).toEqual({
+      status: "error",
+      message: "unable to access bucket: access denied",
+    });
+  });
+
+  it("should fall back to a generic message when the error has none", async () => {
+    mockClient({
+      testConnection: jest.fn().mockResolvedValue({ status: "error" }),
+    });
+    const result = await ResticSyncTestConnection(makeProject());
+    expect(result.status).toBe("error");
+    expect(result.message).toBe("Unable to reach the repository");
   });
 });
 

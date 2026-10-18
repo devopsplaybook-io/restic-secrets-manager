@@ -37,6 +37,7 @@ import {
   ResticSyncPull,
   ResticSyncPush,
   ResticSyncRestoreSnapshot,
+  ResticSyncTestConnection,
 } from "../restic/SyncService";
 import {
   ResticSyncPreviewDiscardLocalChanges,
@@ -136,6 +137,27 @@ export class ProjectsRoutes {
       await SecretsHashRefreshForProject(OTelRequestSpan(req), project.id);
       return res.status(201).send({ project: project.toTransportJson() });
     });
+
+    // Read-only connection test of settings that are not yet persisted:
+    // same body as the creation, no database side effect
+    fastify.post<{ Body: Record<string, unknown> }>(
+      "/test-connection",
+      async (req, res) => {
+        try {
+          await AuthMustBeAdmin(req, res);
+        } catch {
+          return;
+        }
+        const body = req.body || {};
+        const errors = Project.validateNew(body);
+        if (errors.length > 0) {
+          return res.status(400).send({ error: errors.join(" ") });
+        }
+        const project = Project.fromJson(body) as Project;
+        const result = await ResticSyncTestConnection(project);
+        return res.status(200).send({ result });
+      },
+    );
 
     //
     fastify.get<{ Params: { id: string } }>("/:id", async (req, res) => {

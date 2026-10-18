@@ -35,6 +35,16 @@
 - [x] After the projects load, the UI checks each project for remote changes to pull and shows a badge when the repository holds a more recent snapshot (checking state shown while in progress, degraded to "check failed" on error)
 - [x] A History button per project card opens the snapshot history
 
+## Project creation and onboarding
+
+- [x] The create-project dialog has a "Test connection" action that checks the entered settings read-only against the restic repository and shows the outcome inline: the repository is empty (it will be initialized on the first push), the connection succeeds with the number of snapshots found, or the connection failed with a clear error
+- [x] The connection test result is cleared when any setting is edited afterwards, and the create actions are disabled while a test or a creation is running
+- [x] The create-project dialog has a review step before creation: it summarizes the entered settings (access key ID readable, secret key and restic password masked), shows the resolved repository URL and warns that the settings cannot be changed after creation; Back returns to the form with the values preserved
+- [x] Creation errors (duplicate name, validation) are shown inside the dialog so the settings can be corrected
+- [x] The home page empty state invites admins to create their first project and tells other users to ask an administrator for access
+- [x] The secrets list empty state invites the user to add their first secret
+- [x] Admins see a dismissible "Getting started" checklist on the home page with three steps mirroring the documentation (create a project, grant users access, sync your secrets); each step shows its completion state, the checklist hides itself once every step is done and the dismissal is remembered in the browser
+
 ## Snapshot history
 
 - [x] The snapshot history shows a vertical timeline of the repository snapshots (time and short id, most recent first, latest highlighted)

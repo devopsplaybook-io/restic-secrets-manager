@@ -6,7 +6,7 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 
 ## Features
 
-- **Projects** — each project holds the settings of a target restic repository (S3 endpoint, bucket, prefix, region, bucket lookup, credentials and repository password). Projects can be created and deleted, never updated.
+- **Projects** — each project holds the settings of a target restic repository (S3 endpoint, bucket, prefix, region, bucket lookup, credentials and repository password). Projects can be created and deleted, never updated. The creation dialog offers a read-only **connection test** of the settings (empty repository, snapshots found, or a clear error) and a **review step** before creating, since settings are immutable afterwards.
 - **Secrets** — each secret is a named set of key/value pairs, edited through a dedicated dialog with masked values and reveal toggles. Secret names map to JSON file names in the repository. Values can be edited multiline (certificates, private keys, JSON), copied to the clipboard (auto-cleared after 30 seconds), whole secrets can be copied as .env or JSON, and .env/JSON content can be pasted to import key/value pairs when creating a secret. Unsaved edits are protected by a confirmation before leaving, and survive a session expiry.
 - **Secret organization** — secrets can be duplicated or renamed, a key/value entry can be copied from one secret to another, and the secret list can be filtered by secret name or key name.
 - **Pull** — restores the latest snapshot of the project repository and replaces the project secrets in the application, after a preview of the changes it would apply.
@@ -126,7 +126,7 @@ Configuration is provided by environment variables (a `config.json` file next to
 
 On first start, the application detects that no user exists and walks you through the creation of the initial administrator account. Then:
 
-1. Create a project with the restic repository settings (S3 endpoint, bucket, prefix, credentials, repository password).
+1. Create a project with the restic repository settings (S3 endpoint, bucket, prefix, credentials, repository password) — test the connection and review the settings before creating them; a "Getting started" checklist on the home page tracks these steps until they are all done.
 2. Grant users access to the project (admins have access to all projects).
 3. Pull existing secrets from the repository, or push the secrets created in the UI.
 

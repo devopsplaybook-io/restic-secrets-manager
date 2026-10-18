@@ -48,6 +48,7 @@ jest.mock("../restic/SyncService", () => ({
   ResticSyncPull: jest.fn(),
   ResticSyncPush: jest.fn(),
   ResticSyncRestoreSnapshot: jest.fn(),
+  ResticSyncTestConnection: jest.fn(),
 }));
 
 jest.mock("../restic/SyncPreview", () => ({
@@ -71,6 +72,7 @@ import {
 } from "@devopsplaybook.io/common-utils";
 import { ProjectAccessCanAccessMany } from "../users/ProjectAccess";
 import {
+  ProjectsDataAdd,
   ProjectsDataDelete,
   ProjectsDataGet,
   ProjectsDataList,
@@ -82,6 +84,7 @@ import {
   SecretsDataListForProject,
 } from "../secrets/SecretsData";
 import {
+  ProjectScopesAdd,
   ProjectScopesPruneFromUsers,
   ProjectScopesRemove,
 } from "./ProjectScopes";
@@ -91,6 +94,7 @@ import {
   ResticSyncPull,
   ResticSyncPush,
   ResticSyncRestoreSnapshot,
+  ResticSyncTestConnection,
 } from "../restic/SyncService";
 import {
   ResticSyncPreviewDiscardLocalChanges,
@@ -107,6 +111,7 @@ const userSessionMock = AuthGetUserSession as jest.Mock;
 const mustBeAdminMock = AuthMustBeAdmin as jest.Mock;
 const accessManyMock = ProjectAccessCanAccessMany as jest.Mock;
 const dataListMock = ProjectsDataList as jest.Mock;
+const dataAddMock = ProjectsDataAdd as jest.Mock;
 const dataGetMock = ProjectsDataGet as jest.Mock;
 const dataDeleteMock = ProjectsDataDelete as jest.Mock;
 const countsAllMock = SecretsDataCountsAll as jest.Mock;
@@ -115,6 +120,7 @@ const secretsDeleteByProjectMock = SecretsDataDeleteByProjectId as jest.Mock;
 const secretsListMock = SecretsDataListForProject as jest.Mock;
 const scopesPruneMock = ProjectScopesPruneFromUsers as jest.Mock;
 const scopesRemoveMock = ProjectScopesRemove as jest.Mock;
+const scopesAddMock = ProjectScopesAdd as jest.Mock;
 const cacheGetMock = SyncStatusCacheGet as jest.Mock;
 const cacheInvalidateMock = SyncStatusCacheInvalidate as jest.Mock;
 const notifyMock = SyncNotificationsNotify as jest.Mock;
@@ -122,6 +128,7 @@ const syncPullMock = ResticSyncPull as jest.Mock;
 const syncPushMock = ResticSyncPush as jest.Mock;
 const syncRestoreMock = ResticSyncRestoreSnapshot as jest.Mock;
 const syncDiscardMock = ResticSyncDiscardLocalChanges as jest.Mock;
+const syncTestConnectionMock = ResticSyncTestConnection as jest.Mock;
 const previewPullMock = ResticSyncPreviewPull as jest.Mock;
 const previewRestoreMock = ResticSyncPreviewRestoreSnapshot as jest.Mock;
 const previewDiscardMock = ResticSyncPreviewDiscardLocalChanges as jest.Mock;
@@ -275,6 +282,72 @@ describe("DELETE /:id", () => {
     const res = await fastify.inject({ method: "DELETE", url: "/p1" });
     expect(res.statusCode).toBe(403);
     expect(dataGetMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /test-connection", () => {
+  const body = {
+    name: "New Project",
+    s3Endpoint: "s3.example.com",
+    s3Bucket: "bucket",
+    s3AccessKeyId: "access-key",
+    s3SecretAccessKey: "secret-key",
+    resticPassword: "restic-password",
+  };
+
+  it("should return the connection test result envelope", async () => {
+    syncTestConnectionMock.mockResolvedValue({
+      status: "empty",
+      message: "Repository is empty: it will be initialized on the first push",
+    });
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/test-connection",
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result).toEqual({
+      status: "empty",
+      message: "Repository is empty: it will be initialized on the first push",
+    });
+    // The tested settings are the ones that would be created
+    const tested = syncTestConnectionMock.mock.calls[0][0] as Project;
+    expect(tested.name).toBe("New Project");
+    expect(tested.repositoryUrl()).toBe("s3:https://s3.example.com/bucket/new-project");
+  });
+
+  it("should not persist anything", async () => {
+    syncTestConnectionMock.mockResolvedValue({ status: "ok", snapshotCount: 2 });
+    await fastify.inject({ method: "POST", url: "/test-connection", payload: body });
+    expect(dataAddMock).not.toHaveBeenCalled();
+    expect(scopesAddMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 403 when the caller is not an admin", async () => {
+    mustBeAdminMock.mockImplementation(async (_req: unknown, res: any) => {
+      res.status(403).send({ error: "Access Denied" });
+      throw new Error("Access Denied");
+    });
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/test-connection",
+      payload: body,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(syncTestConnectionMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 with the same validation errors as the creation", async () => {
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/test-connection",
+      payload: { name: "" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe(
+      "Invalid project: name is required Invalid project: s3Endpoint is required Invalid project: s3Bucket is required Invalid project: s3AccessKeyId is required Invalid project: s3SecretAccessKey is required Invalid project: resticPassword is required",
+    );
+    expect(syncTestConnectionMock).not.toHaveBeenCalled();
   });
 });
 

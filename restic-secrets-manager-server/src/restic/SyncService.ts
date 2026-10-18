@@ -64,6 +64,14 @@ export interface SyncStatusResult {
   needsPull: boolean;
 }
 
+/** User-facing outcome of a read-only repository connection test. */
+export interface ConnectionTestResult {
+  status: "empty" | "ok" | "error";
+  message: string;
+  snapshotCount?: number;
+  latestSnapshotTime?: string;
+}
+
 export class ResticSyncError extends Error {
   public statusCode: number;
   constructor(message: string, statusCode: number) {
@@ -330,6 +338,36 @@ export async function ResticSyncListSnapshots(
       time: snapshot.time,
       ...snapshotPusherInfo(snapshot),
     }));
+}
+
+/**
+ * Read-only connection test of the given (not yet created) project
+ * settings: stateless, with no lock, cache, notification or database
+ * side effect.
+ */
+export async function ResticSyncTestConnection(
+  project: Project,
+): Promise<ConnectionTestResult> {
+  const client = new ResticClient(project);
+  const result = await client.testConnection();
+  if (result.status === "empty") {
+    return {
+      status: "empty",
+      message: "Repository is empty: it will be initialized on the first push",
+    };
+  }
+  if (result.status === "ok") {
+    return {
+      status: "ok",
+      message: `Connection successful: ${result.snapshotCount} snapshot${result.snapshotCount === 1 ? "" : "s"} found`,
+      snapshotCount: result.snapshotCount,
+      latestSnapshotTime: result.latestSnapshotTime,
+    };
+  }
+  return {
+    status: "error",
+    message: result.message || "Unable to reach the repository",
+  };
 }
 
 /**
