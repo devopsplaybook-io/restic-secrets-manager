@@ -3,7 +3,7 @@
 ## Layout
 
 - [x] Single-page application (Nuxt SPA, SSR disabled), installable as a PWA
-- [x] Top navigation bar with the application name, links (Projects, Users for admins), theme toggle and logout
+- [x] Top navigation bar with the application name, links (Projects, API Tokens when authenticated, Users for admins), theme toggle and logout
 - [x] Dark and light themes, persisted in localStorage with OS preference fallback
 
 ## Pages
@@ -12,13 +12,15 @@
 - [x] **Projects** (`/`): grid of project cards showing name, repository target, secret count, last synchronization info and Pull/Push/History actions; admins can create and delete projects
 - [x] **Project detail** (`/projects/:id`): list of secrets, secret editor dialog (key/value rows), read-only project settings (sensitive values masked)
 - [x] **Users** (`/settings/users`, admin only): user table with role and per-project access; create/edit/delete users
+- [x] **API Tokens** (`/settings/tokens`, any authenticated user): table of the personal tokens (name, creation, expiry, last used) with create/revoke actions
 
 ## Behavior
 
 - [x] When the session expires (1 hour, no renewal), the user is redirected to the login page
 - [x] Shortly before the session ends (5 minutes or less remaining), a warning banner shows the time left and invites the user to save their work
 - [x] After a session-expiry redirect, logging in sends the user back to the page they were working on
-- [x] Destructive actions (delete project, delete user, delete secret) ask for confirmation
+- [x] Destructive actions (delete project, delete user, delete secret, revoke API token) ask for confirmation
+- [x] A newly created API token is displayed exactly once, with a copy action (no auto-clear) and a warning that it will not be shown again
 - [x] Push conflicts (more recent snapshot in the repository) surface a clear error message
 - [x] All dialogs are modal native `<dialog>` elements (showModal): centered with dimmed backdrop; Esc, backdrop click and Cancel/Close buttons dismiss them
 - [x] All dialogs show a visible close (×) icon button in their header
@@ -58,4 +60,4 @@
 - [x] Closing the editor (Cancel, ×, backdrop, Esc), navigating away or closing the tab with unsaved changes asks for a confirmation ("Discard unsaved changes?") before discarding them
 - [x] When unsaved edits existed during a session-expiry redirect, reopening the project page offers to restore them (as an edit of the same secret when it still exists, otherwise as a new secret with the name prefilled)
 
-Last spec review: 2026-10-17
+Last spec review: 2026-10-18

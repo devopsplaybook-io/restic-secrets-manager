@@ -12,6 +12,11 @@ export class Config extends ConfigBase {
   // Directory used for temporary restic working folders
   public TMP_DIR = process.env.TMP_DIR || "/tmp";
 
+  // Sync notifications to the ecosystem notifications server (optional,
+  // disabled while endpoint or token is empty)
+  public NOTIFICATIONS_API_ENDPOINT = "";
+  public NOTIFICATIONS_API_TOKEN = "";
+
   constructor() {
     super("restic-secrets-manager-server");
 
@@ -28,6 +33,8 @@ export class Config extends ConfigBase {
 
     // Register project-specific fields so reload() processes them
     this.addConfigField({ field: "TMP_DIR" });
+    this.addConfigField({ field: "NOTIFICATIONS_API_ENDPOINT" });
+    this.addConfigField({ field: "NOTIFICATIONS_API_TOKEN", sensitive: true });
   }
 
   public async reload(): Promise<void> {
