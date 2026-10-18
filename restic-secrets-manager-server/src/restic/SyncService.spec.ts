@@ -389,10 +389,19 @@ describe("ResticSyncPush", () => {
       ),
     };
 
-    // Both routes read the project before acquiring the sync lock
+    // Both routes read the project before acquiring the sync lock; the
+    // calls share the project id so the per-project sync lock serializes
+    // them deterministically (call order = Promise.all argument order)
+    const firstProject = makeProject();
     const [first, second] = await Promise.all([
-      ResticSyncPush(span(), testConfig(), makeProject(), undefined, dataApi),
-      ResticSyncPush(span(), testConfig(), makeProject(), undefined, dataApi),
+      ResticSyncPush(span(), testConfig(), firstProject, undefined, dataApi),
+      ResticSyncPush(
+        span(),
+        testConfig(),
+        makeProject({ id: firstProject.id }),
+        undefined,
+        dataApi,
+      ),
     ]);
 
     expect(dataApi.ProjectsDataGet).toHaveBeenCalledTimes(2);
