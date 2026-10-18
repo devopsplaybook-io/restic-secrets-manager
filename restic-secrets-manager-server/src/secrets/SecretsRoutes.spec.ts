@@ -92,6 +92,74 @@ describe("GET /:id/secrets", () => {
   });
 });
 
+describe("GET /:id/secrets/by-name/:name/export", () => {
+  it("should export a secret as .env text by default", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { KEY: "value" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/plain");
+    expect(res.body).toBe("KEY=value\n");
+  });
+
+  it("should export a secret as JSON with format=json", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { KEY: "value" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export?format=json",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/json");
+    expect(res.body).toBe('{\n  "KEY": "value"\n}\n');
+  });
+
+  it("should escape values that the .env format would alter", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { CERT: "line1\nline2" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export",
+    });
+    expect(res.body).toBe('CERT="line1\\nline2"\n');
+  });
+
+  it("should return 404 for an unknown secret name", async () => {
+    getByNameMock.mockResolvedValue(null);
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/unknown/export",
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: "Secret Not Found" });
+  });
+
+  it("should return 400 for an unknown format", async () => {
+    getByNameMock.mockResolvedValue(secretFixture());
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export?format=yaml",
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("should return 403 and skip the data layer when access is denied", async () => {
+    denyAccess();
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export",
+    });
+    expect(res.statusCode).toBe(403);
+    expect(getByNameMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /:id/secrets", () => {
   it("should create a secret and refresh the content hash", async () => {
     getByNameMock.mockResolvedValue(null);

@@ -24,4 +24,13 @@
 - [x] Access is granted/revoked by admins from the user management UI
 - [x] Access changes take effect immediately (authorization is checked against the database, not the token)
 
-Last spec review: 2026-10-17
+## API tokens
+
+- [x] Authenticated users manage their own API tokens (create, list, revoke) from the web UI; admins can additionally revoke any token
+- [x] The token plaintext is returned only at creation and shown exactly once in the UI; only a SHA-256 hash is stored
+- [x] A token can have an optional expiry date (must be in the future at creation); a token without expiry never expires
+- [x] The last successful authentication with a token is tracked (best effort) and shown in the UI
+- [x] A token authenticates as its owning user with the user's live role and project scopes (resolved per request, so access or role changes apply immediately)
+- [x] The number of API tokens per user is bounded (`API_TOKENS_MAX_PER_USER`)
+
+Last spec review: 2026-10-18

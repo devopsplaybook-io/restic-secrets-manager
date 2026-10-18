@@ -57,4 +57,10 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Snapshot history entries carry the pusher attribution: the `pushed-by:` restic tag when present, falling back to the user and host reported by restic; older snapshots carry no attribution
 - [x] Restic synchronization failures surface richer error context: the last 10 output lines, capped at 1000 characters (credentials never appear, they are passed via environment variables)
 
-Last spec review: 2026-10-17
+## Programmatic access
+
+- [x] A secret can be exported by name through a read-only API endpoint returning a .env file (default) or JSON (`?format=json`); project access is required
+- [x] Sync events (push, pull, snapshot restore, discard of local changes, push conflict) emit a notification through the ecosystem notifications server when the integration is configured (`NOTIFICATIONS_API_ENDPOINT` / `NOTIFICATIONS_API_TOKEN`, disabled by default)
+- [x] Notification failures never fail the synchronization and notification payloads never contain secret values
+
+Last spec review: 2026-10-18

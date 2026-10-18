@@ -47,6 +47,7 @@ import {
   SyncStatusCacheGet,
   SyncStatusCacheInvalidate,
 } from "../restic/SyncStatusCache";
+import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 import { Config } from "../Config";
 
 export class ProjectsRoutes {
@@ -211,6 +212,12 @@ export class ProjectsRoutes {
       try {
         const result = await ResticSyncPull(span, config, project);
         SyncStatusCacheInvalidate(project.id);
+        SyncNotificationsNotify(
+          "pull",
+          project,
+          userSession.userName ?? "unknown",
+          result.snapshotId,
+        );
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);
@@ -242,8 +249,21 @@ export class ProjectsRoutes {
           userSession.userName,
         );
         SyncStatusCacheInvalidate(project.id);
+        SyncNotificationsNotify(
+          "push",
+          project,
+          userSession.userName ?? "unknown",
+          result.snapshotId,
+        );
         return res.status(200).send(result);
       } catch (e) {
+        if (e instanceof ResticSyncError && e.statusCode === 409) {
+          SyncNotificationsNotify(
+            "push_conflict",
+            project,
+            userSession.userName ?? "unknown",
+          );
+        }
         return sendSyncError(res, e);
       }
     });
@@ -329,6 +349,12 @@ export class ProjectsRoutes {
             req.params.snapshotId,
           );
           SyncStatusCacheInvalidate(project.id);
+          SyncNotificationsNotify(
+            "restore",
+            project,
+            userSession.userName ?? "unknown",
+            req.params.snapshotId,
+          );
           return res.status(200).send(result);
         } catch (e) {
           return sendSyncError(res, e);
@@ -453,6 +479,12 @@ export class ProjectsRoutes {
       try {
         const result = await ResticSyncDiscardLocalChanges(span, config, project);
         SyncStatusCacheInvalidate(project.id);
+        SyncNotificationsNotify(
+          "discard",
+          project,
+          userSession.userName ?? "unknown",
+          result.snapshotId,
+        );
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);

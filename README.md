@@ -15,6 +15,8 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 - **Change previews** — every operation that replaces secrets (pull, snapshot restore, discard of local changes) shows first which secrets and keys would be added, changed or removed — values stay masked, only value lengths are exposed — and runs only after confirmation.
 - **Snapshot history** — the home page shows the timeline of the repository snapshots with the pushing user of each snapshot; any snapshot can be restored as the project secrets (with a preview before confirmation), and local changes that were not pushed can be discarded by restoring the last synchronized snapshot (also previewed).
 - **Users and access control** — users authenticate with username/password (JWT). Access is granted per project: regular users see only the projects they are granted access to (none by default), admins see and manage everything.
+- **API tokens** — personal tokens created in the web UI (Settings → API Tokens) let scripts and CI jobs call the API with the same permissions as their user, without the web UI. The token value is shown exactly once at creation; only its hash is stored.
+- **Sync notifications** — optional notifications to the ecosystem notifications server on sync events (push, pull, snapshot restore, discard, push conflict); disabled by default and fail-safe.
 - **Short-lived sessions** — sessions last one hour and are never renewed: the UI warns shortly before the session ends and preserves unsaved edits across the expiry, so users can simply log in again (and resume where they left off).
 - **PWA** — installable single-page application with dark/light theme.
 
@@ -63,6 +65,38 @@ restic-secrets-manager pairs with [kubernetes-secrets-cloud-sync](https://github
 
 A combined Kustomize deployment of both tools is provided — see the [deployment guide](./docs/deployments/kubernetes/restic-secrets-manager-with-cloud-sync).
 
+## Programmatic access
+
+Scripts, CI jobs and homelab automations can consume secrets without the web UI using an API token:
+
+1. Create a token in the web UI (Settings → API Tokens). The token grants the same permissions as its user, resolved live (revoking a project access applies immediately); revoke it anytime from the same page.
+2. Call the API with the token:
+
+```bash
+export RSM_URL="http://localhost:8080"
+export RSM_TOKEN="<api token>"
+export PROJECT_ID="<project id>"
+export SECRET_NAME="<secret name>"
+
+# Export one secret as a .env file
+curl -fsS -H "Authorization: Bearer $RSM_TOKEN" \
+  "$RSM_URL/api/projects/$PROJECT_ID/secrets/by-name/$SECRET_NAME/export" -o app.env
+
+# Export it as JSON instead
+curl -fsS -H "Authorization: Bearer $RSM_TOKEN" \
+  "$RSM_URL/api/projects/$PROJECT_ID/secrets/by-name/$SECRET_NAME/export?format=json"
+
+# List the secrets of the project (JSON, values included)
+curl -fsS -H "Authorization: Bearer $RSM_TOKEN" "$RSM_URL/api/projects/$PROJECT_ID/secrets"
+
+# Trigger a pull or a push from CI (push answers 409 when the repository holds a more recent snapshot)
+curl -fsS -X POST -H "Authorization: Bearer $RSM_TOKEN" "$RSM_URL/api/projects/$PROJECT_ID/pull"
+```
+
+## Sync notifications
+
+restic-secrets-manager can notify the ecosystem notifications server ([notifications](https://github.com/devopsplaybook-io/notifications)) on sync events: push success, pull success, snapshot restore, discard of local changes and push conflict. Set `NOTIFICATIONS_API_ENDPOINT` and `NOTIFICATIONS_API_TOKEN` to enable the integration; it is disabled by default, failures never break a synchronization, and payloads carry project/snapshot/actor information but never secret values.
+
 ## Configuration
 
 Configuration is provided by environment variables (a `config.json` file next to the server can also be used):
@@ -82,6 +116,8 @@ Configuration is provided by environment variables (a `config.json` file next to
 | `DATABASE_POSTGRES_DATABASE`           |                          | PostgreSQL database                                 |
 | `LOG_LEVEL`                            | `info`                   | Log level                                           |
 | `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders |
+| `NOTIFICATIONS_API_ENDPOINT`           |                          | Notifications server endpoint (empty = disabled)    |
+| `NOTIFICATIONS_API_TOKEN`              |                          | Notifications server API token                      |
 | `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`  |                          | OTLP HTTP endpoint for traces                       |
 | `OPENTELEMETRY_COLLECTOR_HTTP_METRICS` |                          | OTLP HTTP endpoint for metrics                      |
 | `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`    |                          | OTLP HTTP endpoint for logs                         |
@@ -115,6 +151,8 @@ Deployment examples with real deployment files are available in [docs/deployment
 ## Security notes
 
 - Restic repository credentials and the repository password are stored in the application database and are never returned by the API nor displayed in the UI.
+- API tokens are stored as SHA-256 hashes only; the plaintext value is shown exactly once at creation. A token carries the permissions of its owning user, resolved live on each request.
+- Sync notification payloads never contain secret values.
 - Authorization checks read the user from the database on every request, so access changes take effect immediately.
 - Push is rejected with HTTP 409 when the target repository holds a more recent snapshot, preventing accidental overwrites.
 - Sessions are short-lived (1 hour) and not renewed; expired sessions require a new login.

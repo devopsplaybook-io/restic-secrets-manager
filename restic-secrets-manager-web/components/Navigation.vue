@@ -15,6 +15,14 @@
           <span class="nav-label">Projects</span></NuxtLink
         >
       </li>
+      <li v-if="authStore.isAuthenticated">
+        <NuxtLink
+          to="/settings/tokens"
+          :class="activeRoute == '/settings' ? 'active' : 'inactive'"
+          ><i class="bi bi-key"/>
+          <span class="nav-label">API Tokens</span></NuxtLink
+        >
+      </li>
       <li v-if="authStore.isAdmin">
         <NuxtLink
           to="/settings/users"

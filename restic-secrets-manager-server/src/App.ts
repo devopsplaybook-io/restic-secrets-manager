@@ -23,6 +23,7 @@ import { ProjectScopesSync } from "./projects/ProjectScopes";
 import { SecretsHashBackfillAll } from "./secrets/SecretsHash";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
 import { registerStaticFiles } from "./StaticCacheHeaders";
+import { SyncNotificationsInit } from "./restic/SyncNotifications";
 import { AuthWiringSetOTel } from "./users/AuthWiring";
 import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
 
@@ -42,6 +43,8 @@ Promise.resolve().then(async () => {
   OTelSetTracer(new StandardTracer(config));
   OTelSetMeter(new StandardMeter(config));
   OTelLogger().initOTel(config);
+
+  SyncNotificationsInit(config);
 
   DbUtilsSetOTel(OTelTracer(), OTelLogger());
 

@@ -10,4 +10,10 @@ describe("Config", () => {
     const config = new Config();
     expect(config.TMP_DIR).toBe("/tmp");
   });
+
+  it("should default the notifications integration to disabled", () => {
+    const config = new Config();
+    expect(config.NOTIFICATIONS_API_ENDPOINT).toBe("");
+    expect(config.NOTIFICATIONS_API_TOKEN).toBe("");
+  });
 });

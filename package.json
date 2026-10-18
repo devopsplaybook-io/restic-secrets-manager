@@ -1,6 +1,6 @@
 {
   "name": "restic-secrets-manager",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Web UI to manage application secrets backed by restic repositories",
   "main": "ecosystem.config.js",
   "scripts": {

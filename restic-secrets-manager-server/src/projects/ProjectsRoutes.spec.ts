@@ -61,6 +61,10 @@ jest.mock("../restic/SyncStatusCache", () => ({
   SyncStatusCacheInvalidate: jest.fn(),
 }));
 
+jest.mock("../restic/SyncNotifications", () => ({
+  SyncNotificationsNotify: jest.fn(),
+}));
+
 import {
   AuthGetUserSession,
   AuthMustBeAdmin,
@@ -97,6 +101,7 @@ import {
   SyncStatusCacheGet,
   SyncStatusCacheInvalidate,
 } from "../restic/SyncStatusCache";
+import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 
 const userSessionMock = AuthGetUserSession as jest.Mock;
 const mustBeAdminMock = AuthMustBeAdmin as jest.Mock;
@@ -112,6 +117,7 @@ const scopesPruneMock = ProjectScopesPruneFromUsers as jest.Mock;
 const scopesRemoveMock = ProjectScopesRemove as jest.Mock;
 const cacheGetMock = SyncStatusCacheGet as jest.Mock;
 const cacheInvalidateMock = SyncStatusCacheInvalidate as jest.Mock;
+const notifyMock = SyncNotificationsNotify as jest.Mock;
 const syncPullMock = ResticSyncPull as jest.Mock;
 const syncPushMock = ResticSyncPush as jest.Mock;
 const syncRestoreMock = ResticSyncRestoreSnapshot as jest.Mock;
@@ -349,6 +355,89 @@ describe("synchronization endpoints", () => {
     const res = await fastify.inject({ method: "POST", url: "/p1/push" });
     expect(res.statusCode).toBe(200);
     expect(syncPushMock.mock.calls[0][3]).toBe("admin");
+  });
+});
+
+describe("sync notifications", () => {
+  beforeEach(() => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+  });
+
+  it("should notify a successful push", async () => {
+    const project = projectFixture({ id: "p1" });
+    dataGetMock.mockResolvedValue(project);
+    syncPushMock.mockResolvedValue({
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+    await fastify.inject({ method: "POST", url: "/p1/push" });
+    expect(notifyMock).toHaveBeenCalledWith("push", project, "admin", "abc12345");
+  });
+
+  it("should notify a successful pull", async () => {
+    const project = projectFixture({ id: "p1" });
+    dataGetMock.mockResolvedValue(project);
+    syncPullMock.mockResolvedValue({
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+      secrets: 2,
+      keys: 3,
+    });
+    await fastify.inject({ method: "POST", url: "/p1/pull" });
+    expect(notifyMock).toHaveBeenCalledWith("pull", project, "admin", "abc12345");
+  });
+
+  it("should notify a successful snapshot restore", async () => {
+    const project = projectFixture({ id: "p1" });
+    dataGetMock.mockResolvedValue(project);
+    syncRestoreMock.mockResolvedValue({
+      snapshotId: "snap-1",
+      snapshotTime: "2026-01-01T00:00:00Z",
+      secrets: 2,
+      keys: 3,
+    });
+    await fastify.inject({
+      method: "POST",
+      url: "/p1/snapshots/snap-1/restore",
+    });
+    expect(notifyMock).toHaveBeenCalledWith("restore", project, "admin", "snap-1");
+  });
+
+  it("should notify a successful discard", async () => {
+    const project = projectFixture({ id: "p1" });
+    dataGetMock.mockResolvedValue(project);
+    syncDiscardMock.mockResolvedValue({
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+      secrets: 2,
+      keys: 3,
+    });
+    await fastify.inject({ method: "POST", url: "/p1/discard" });
+    expect(notifyMock).toHaveBeenCalledWith("discard", project, "admin", "abc12345");
+  });
+
+  it("should notify a push conflict and keep the 409 response", async () => {
+    const project = projectFixture({ id: "p1" });
+    dataGetMock.mockResolvedValue(project);
+    syncPushMock.mockRejectedValue(
+      new ResticSyncError("A newer snapshot exists", 409),
+    );
+    const res = await fastify.inject({ method: "POST", url: "/p1/push" });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: "A newer snapshot exists" });
+    expect(notifyMock).toHaveBeenCalledWith(
+      "push_conflict",
+      project,
+      "admin",
+    );
+  });
+
+  it("should not notify non-409 sync errors", async () => {
+    syncPushMock.mockRejectedValue(new Error("restic exploded"));
+    await fastify.inject({ method: "POST", url: "/p1/push" });
+    syncPullMock.mockRejectedValue(new ResticSyncError("No snapshot", 409));
+    await fastify.inject({ method: "POST", url: "/p1/pull" });
+    expect(notifyMock).not.toHaveBeenCalled();
   });
 });
 

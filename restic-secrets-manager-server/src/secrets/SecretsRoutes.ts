@@ -3,6 +3,10 @@ import { FastifyInstance } from "fastify";
 import { Secret, SecretData } from "../model/Secret";
 import { OTelRequestSpan } from "../OTelContext";
 import {
+  secretDataToEnvContent,
+  secretDataToJsonContent,
+} from "./SecretEnv";
+import {
   SecretsDataAdd,
   SecretsDataDelete,
   SecretsDataGet,
@@ -37,6 +41,41 @@ export class SecretsRoutes {
           .send({ secrets: secrets.map((s) => s.toJson()) });
       },
     );
+
+    // Read-only export of one secret, by name, as .env or JSON text
+    // (scripts consume secrets without the web UI)
+    fastify.get<{
+      Params: { id: string; name: string };
+      Querystring: { format?: string };
+    }>("/:id/secrets/by-name/:name/export", async (req, res) => {
+      if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
+      const secret = await SecretsDataGetByName(
+        OTelRequestSpan(req),
+        req.params.id,
+        req.params.name,
+      );
+      if (!secret) {
+        return res.status(404).send({ error: "Secret Not Found" });
+      }
+      const format = (req.query.format || "env").toLowerCase();
+      if (format !== "env" && format !== "json") {
+        return res
+          .status(400)
+          .send({ error: "Invalid format: env or json expected" });
+      }
+      if (format === "json") {
+        return res
+          .status(200)
+          .header("content-type", "application/json")
+          .send(secretDataToJsonContent(secret.data));
+      }
+      return res
+        .status(200)
+        .header("content-type", "text/plain; charset=utf-8")
+        .send(secretDataToEnvContent(secret.data));
+    });
 
     //
     fastify.post<{
