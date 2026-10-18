@@ -12,6 +12,8 @@
 
     <div v-if="error" class="error-message">{{ error }}</div>
 
+    <FirstRunChecklist :projects="projects" @create-project="openCreateProject"/>
+
     <div v-if="projects.length > 0" class="projects-grid">
       <article v-for="project in projects" :key="project.id" class="project-card">
         <header>
@@ -94,6 +96,12 @@
     <div v-else class="empty-state">
       <i class="bi bi-box-seam"/>
       <p>No projects yet.</p>
+      <button v-if="authStore.isAdmin" @click="openCreateProject">
+        <i class="bi bi-plus-lg"/> Create your first project
+      </button>
+      <small v-else class="text-muted">
+        Ask an administrator to create a project and grant you access.
+      </small>
     </div>
     <!-- CREATE PROJECT MODAL -->
     <dialog v-if="showCreateModal" ref="create-project" @click.self="closeCreateModal" @close="onCreateModalClosed">
@@ -102,56 +110,99 @@
           <button aria-label="Close" class="close-btn" @click="closeCreateModal"><i class="bi bi-x-lg"/></button>
           <h3><i class="bi bi-plus-lg"/> Create Project</h3>
         </header>
-        <label>
-          Name
-          <input v-model="projectForm.name" type="text" placeholder="Project name" required >
-        </label>
-        <label>
-          Description
-          <input v-model="projectForm.description" type="text" placeholder="Optional description" >
-        </label>
-        <label>
-          S3 Endpoint
-          <input v-model="projectForm.s3Endpoint" type="text" placeholder="s3.example.com" required >
-        </label>
-        <label>
-          S3 Bucket
-          <input v-model="projectForm.s3Bucket" type="text" placeholder="bucket" required >
-        </label>
-        <label>
-          Repository Prefix
-          <input v-model="projectForm.repoPrefix" type="text" placeholder="Defaults to the project name" >
-        </label>
-        <label>
-          S3 Region (optional)
-          <input v-model="projectForm.s3Region" type="text" placeholder="Auto-detected when empty" >
-        </label>
-        <label>
-          S3 Bucket Lookup
-          <select v-model="projectForm.s3BucketLookup">
-            <option value="dns">dns</option>
-            <option value="path">path</option>
-            <option value="auto">auto</option>
-          </select>
-        </label>
-        <label>
-          S3 Access Key ID
-          <input v-model="projectForm.s3AccessKeyId" type="text" placeholder="Access key" required >
-        </label>
-        <label>
-          S3 Secret Access Key
-          <input v-model="projectForm.s3SecretAccessKey" type="password" placeholder="Secret key" required >
-        </label>
-        <label>
-          Restic Password
-          <input v-model="projectForm.resticPassword" type="password" placeholder="Repository password" required >
-        </label>
-        <footer>
-          <button class="secondary" @click="closeCreateModal">Cancel</button>
-          <button :disabled="creating" @click="createProject">
-            {{ creating ? "Creating…" : "Create" }}
-          </button>
-        </footer>
+
+        <!-- Step 1: settings form -->
+        <template v-if="createStep === 'form'">
+          <label>
+            Name
+            <input v-model="projectForm.name" type="text" placeholder="Project name" required >
+          </label>
+          <label>
+            Description
+            <input v-model="projectForm.description" type="text" placeholder="Optional description" >
+          </label>
+          <label>
+            S3 Endpoint
+            <input v-model="projectForm.s3Endpoint" type="text" placeholder="s3.example.com" required >
+          </label>
+          <label>
+            S3 Bucket
+            <input v-model="projectForm.s3Bucket" type="text" placeholder="bucket" required >
+          </label>
+          <label>
+            Repository Prefix
+            <input v-model="projectForm.repoPrefix" type="text" placeholder="Defaults to the project name" >
+          </label>
+          <label>
+            S3 Region (optional)
+            <input v-model="projectForm.s3Region" type="text" placeholder="Auto-detected when empty" >
+          </label>
+          <label>
+            S3 Bucket Lookup
+            <select v-model="projectForm.s3BucketLookup">
+              <option value="dns">dns</option>
+              <option value="path">path</option>
+              <option value="auto">auto</option>
+            </select>
+          </label>
+          <label>
+            S3 Access Key ID
+            <input v-model="projectForm.s3AccessKeyId" type="text" placeholder="Access key" required >
+          </label>
+          <label>
+            S3 Secret Access Key
+            <input v-model="projectForm.s3SecretAccessKey" type="password" placeholder="Secret key" required >
+          </label>
+          <label>
+            Restic Password
+            <input v-model="projectForm.resticPassword" type="password" placeholder="Repository password" required >
+          </label>
+          <div v-if="testError" class="error-message">{{ testError }}</div>
+          <div v-if="testResult" class="test-result" :class="`test-result--${testResult.status}`">
+            <i class="bi" :class="testResultIcon"/>
+            <span>{{ testResult.message }}</span>
+          </div>
+          <footer class="dialog-footer">
+            <button class="secondary" @click="closeCreateModal">Cancel</button>
+            <button class="secondary" :disabled="testing || creating" @click="testConnection">
+              <i v-if="testing" class="bi bi-arrow-repeat spin"/>
+              {{ testing ? "Testing…" : "Test connection" }}
+            </button>
+            <button :disabled="testing || creating" @click="continueToReview">Continue</button>
+          </footer>
+        </template>
+
+        <!-- Step 2: review of the immutable settings -->
+        <template v-else>
+          <p class="review-warning">
+            <i class="bi bi-exclamation-triangle-fill"/>
+            These settings cannot be changed after creation: review them
+            carefully before creating the project.
+          </p>
+          <div class="review-grid">
+            <div><small class="text-muted">Name</small><div>{{ projectForm.name }}</div></div>
+            <div><small class="text-muted">Description</small><div>{{ projectForm.description || "None" }}</div></div>
+            <div><small class="text-muted">S3 Endpoint</small><div>{{ projectForm.s3Endpoint }}</div></div>
+            <div><small class="text-muted">S3 Bucket</small><div>{{ projectForm.s3Bucket }}</div></div>
+            <div><small class="text-muted">Repository Prefix</small><div>{{ effectiveRepoPrefix || "None" }}</div></div>
+            <div v-if="projectForm.s3Region"><small class="text-muted">S3 Region</small><div>{{ projectForm.s3Region }}</div></div>
+            <div><small class="text-muted">S3 Bucket Lookup</small><div>{{ projectForm.s3BucketLookup }}</div></div>
+            <div><small class="text-muted">S3 Access Key ID</small><div class="mono">{{ projectForm.s3AccessKeyId }}</div></div>
+            <div><small class="text-muted">S3 Secret Access Key</small><div>{{ maskedValue }} (configured)</div></div>
+            <div><small class="text-muted">Restic Password</small><div>{{ maskedValue }} (configured)</div></div>
+            <div class="review-url">
+              <small class="text-muted">Repository URL</small>
+              <div class="mono">{{ reviewRepositoryUrl }}</div>
+            </div>
+          </div>
+          <div v-if="createError" class="error-message">{{ createError }}</div>
+          <footer class="dialog-footer">
+            <button class="secondary" @click="backToForm">Back</button>
+            <button :disabled="creating || testing" @click="createProject">
+              {{ creating ? "Creating…" : "Create project" }}
+            </button>
+          </footer>
+        </template>
       </article>
     </dialog>
 
@@ -213,6 +264,7 @@
 
 <script setup>
 import api from "../utils/api";
+import { MASKED_VALUE } from "../utils/sync-preview";
 const authStore = useAuthStore();
 
 const projects = ref([]);
@@ -222,6 +274,12 @@ const createModal = useModalDialog("create-project");
 const showCreateModal = createModal.isOpen;
 const creating = ref(false);
 const projectForm = ref({});
+// "form" collects the settings, "review" confirms them before creation
+const createStep = ref("form");
+const testing = ref(false);
+const testResult = ref(null);
+const testError = ref("");
+const createError = ref("");
 
 const deleteModal = useModalDialog("delete-project");
 const showDeleteConfirm = deleteModal.isOpen;
@@ -323,6 +381,10 @@ function formatTime(iso) {
 
 function openCreateProject() {
   projectForm.value = defaultForm();
+  createStep.value = "form";
+  testResult.value = null;
+  testError.value = "";
+  createError.value = "";
   createModal.open();
 }
 
@@ -334,15 +396,109 @@ function onCreateModalClosed() {
   createModal.onClose();
 }
 
+// Any field edit invalidates a previous connection test result
+watch(
+  projectForm,
+  () => {
+    testResult.value = null;
+    testError.value = "";
+  },
+  { deep: true },
+);
+
+const maskedValue = MASKED_VALUE;
+
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+const effectiveRepoPrefix = computed(() => {
+  const prefix = (projectForm.value.repoPrefix || "").trim();
+  if (prefix) {
+    return prefix;
+  }
+  return slugify(projectForm.value.name || "");
+});
+
+const reviewRepositoryUrl = computed(() => {
+  const form = projectForm.value;
+  if (!form.s3Endpoint || !form.s3Bucket) {
+    return "";
+  }
+  return `s3:https://${form.s3Endpoint}/${form.s3Bucket}/${effectiveRepoPrefix.value}`;
+});
+
+const testResultIcon = computed(() => {
+  if (!testResult.value) {
+    return "";
+  }
+  if (testResult.value.status === "ok") {
+    return "bi-check-circle-fill";
+  }
+  if (testResult.value.status === "empty") {
+    return "bi-info-circle";
+  }
+  return "bi-exclamation-triangle-fill";
+});
+
+function requiredFieldsPresent() {
+  const form = projectForm.value;
+  return [
+    form.name,
+    form.s3Endpoint,
+    form.s3Bucket,
+    form.s3AccessKeyId,
+    form.s3SecretAccessKey,
+    form.resticPassword,
+  ].every((value) => typeof value === "string" && value.trim().length > 0);
+}
+
+async function testConnection() {
+  testError.value = "";
+  testResult.value = null;
+  if (!requiredFieldsPresent()) {
+    testError.value =
+      "Fill in all required fields before testing the connection.";
+    return;
+  }
+  testing.value = true;
+  try {
+    const res = await api.post("/projects/test-connection", projectForm.value);
+    testResult.value = res.data.result;
+  } catch (e) {
+    testResult.value = {
+      status: "error",
+      message: e.response?.data?.error || "Unable to test the connection",
+    };
+  } finally {
+    testing.value = false;
+  }
+}
+
+function continueToReview() {
+  createError.value = "";
+  createStep.value = "review";
+}
+
+function backToForm() {
+  createError.value = "";
+  createStep.value = "form";
+}
+
 async function createProject() {
   creating.value = true;
-  error.value = "";
+  createError.value = "";
   try {
     await api.post("/projects", projectForm.value);
     closeCreateModal();
     await loadProjects();
   } catch (e) {
-    error.value = e.response?.data?.error || "Unable to create the project";
+    createError.value =
+      e.response?.data?.error || "Unable to create the project";
   } finally {
     creating.value = false;
   }
@@ -634,5 +790,71 @@ async function onHistoryRestored() {
   padding: var(--space-sm);
   border: 1px solid var(--color-danger);
   border-radius: var(--radius-sm);
+}
+
+.dialog-footer {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: var(--space-xs);
+}
+
+/* Inline connection test outcome inside the create dialog */
+.test-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+}
+
+.test-result--ok {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.test-result--empty {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+.test-result--error {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+.review-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  margin: 0 0 var(--space-sm);
+}
+
+.review-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.review-grid > div > small {
+  display: block;
+}
+
+.review-url {
+  grid-column: 1 / -1;
+}
+
+.review-url .mono {
+  word-break: break-all;
+}
+
+.mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--text-sm);
 }
 </style>

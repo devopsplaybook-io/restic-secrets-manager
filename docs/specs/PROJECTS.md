@@ -23,10 +23,18 @@ Each project is defined with the settings required to connect to a restic reposi
 - [x] Projects can be deleted by admins (deleting also deletes the project secrets from the application database; the restic repository is left untouched)
 - [x] Projects can never be updated: settings are immutable after creation
 
+## Setup confidence
+
+- [x] The create-project dialog offers a read-only "Test connection" action: it validates the S3 endpoint, bucket and credentials and the restic password by invoking restic without writing to the repository
+- [x] The connection test reports "repository is empty (it will be initialized on the first push)" when the repository does not exist yet, "N snapshots found" when it is reachable, or a clear error message when the credentials or the endpoint are wrong
+- [x] The connection test is limited in time so an unreachable endpoint cannot hang the dialog indefinitely
+- [x] Before creation, a confirmation summary step shows the settings that were entered (secret key and restic password masked) and warns that the settings cannot be changed after creation
+- [x] Project settings remain immutable: a mistake is corrected by deleting and re-creating the project, which the test and review steps aim to make rare
+
 ## Visibility
 
 - [x] Admins see all projects
 - [x] Regular users only see the projects they have been granted access to
 - [x] Users without access to any project see an empty list
 
-Last spec review: 2026-09-13
+Last spec review: 2026-10-18

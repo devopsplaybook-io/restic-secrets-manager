@@ -6,6 +6,13 @@ export interface ResticCommandResult {
   code: number | string;
   stdout: string;
   stderr: string;
+  /** True when the invocation was killed after its timeout. */
+  timedOut?: boolean;
+}
+
+export interface ResticRunOptions {
+  /** Kills the restic process after this many milliseconds. */
+  timeoutMs?: number;
 }
 
 export type ResticRunner = (
@@ -13,6 +20,7 @@ export type ResticRunner = (
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd?: string,
+  options?: ResticRunOptions,
 ) => Promise<ResticCommandResult>;
 
 /** Default runner: executes the restic binary with the provided env/cwd. */
@@ -21,18 +29,25 @@ export function defaultResticRunner(
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd?: string,
+  options?: ResticRunOptions,
 ): Promise<ResticCommandResult> {
   return new Promise((resolve) => {
     childProcess.execFile(
       command,
       args,
-      { env, cwd, maxBuffer: 50 * 1024 * 1024 },
+      {
+        env,
+        cwd,
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: options?.timeoutMs,
+      },
       (error, stdout, stderr) => {
         const code = error ? (error as any).code ?? 1 : 0;
         resolve({
           code,
           stdout: String(stdout),
           stderr: String(stderr),
+          timedOut: Boolean((error as any)?.killed),
         });
       },
     );
@@ -44,6 +59,17 @@ export interface ResticSnapshot {
   time: string;
   [key: string]: any;
 }
+
+export interface ResticConnectionTestResult {
+  status: "empty" | "ok" | "error";
+  snapshotCount?: number;
+  latestSnapshotTime?: string;
+  /** Sanitized error message when the status is "error". */
+  message?: string;
+}
+
+/** Time limit of the read-only connection test invocation. */
+export const CONNECTION_TEST_TIMEOUT_MS = 30_000;
 
 /**
  * Returns the most recent snapshot of the list (by snapshot time),
@@ -94,8 +120,50 @@ export class ResticClient {
     return args;
   }
 
-  public async run(args: string[], cwd?: string): Promise<ResticCommandResult> {
-    return this.runner("restic", args, this.env(), cwd);
+  public async run(
+    args: string[],
+    cwd?: string,
+    options?: ResticRunOptions,
+  ): Promise<ResticCommandResult> {
+    return this.runner("restic", args, this.env(), cwd, options);
+  }
+
+  /**
+   * Read-only check of the repository settings: runs `snapshots --json`
+   * with a time limit and classifies the outcome as an empty repository,
+   * a reachable repository (with its snapshot count) or a failure.
+   */
+  public async testConnection(): Promise<ResticConnectionTestResult> {
+    const result = await this.run([...this.baseArgs(), "snapshots", "--json"], undefined, {
+      timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
+    });
+    if (result.timedOut) {
+      return {
+        status: "error",
+        message: `The connection test timed out after ${CONNECTION_TEST_TIMEOUT_MS / 1000} seconds: the endpoint may be unreachable`,
+      };
+    }
+    if (result.code === 0) {
+      let snapshots: ResticSnapshot[];
+      try {
+        snapshots = JSON.parse(result.stdout) as ResticSnapshot[];
+      } catch {
+        return {
+          status: "error",
+          message: "Unable to parse restic snapshots output",
+        };
+      }
+      const latest = latestSnapshot(snapshots);
+      return {
+        status: "ok",
+        snapshotCount: snapshots.length,
+        latestSnapshotTime: latest ? latest.time : undefined,
+      };
+    }
+    if (isRepoNotInitialized(result)) {
+      return { status: "empty" };
+    }
+    return { status: "error", message: sanitizeResticError(result) };
   }
 
   /** True when the repository is initialized (has a config). */

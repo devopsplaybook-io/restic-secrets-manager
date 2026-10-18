@@ -65,6 +65,9 @@
     <div v-else class="empty-state">
       <i class="bi bi-key"/>
       <p>No secrets in this project yet.</p>
+      <button @click="openCreateSecret">
+        <i class="bi bi-plus-lg"/> Add your first secret
+      </button>
     </div>
 
     <h3>Repository Settings</h3>

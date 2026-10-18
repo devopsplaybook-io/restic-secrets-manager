@@ -1,5 +1,6 @@
 import { Project } from "../model/Project";
 import {
+  CONNECTION_TEST_TIMEOUT_MS,
   isRepoNotInitialized,
   latestSnapshot,
   ResticClient,
@@ -304,6 +305,89 @@ describe("ResticClient restore", () => {
     await expect(client.restore("abcd1234", "/tmp/restore")).rejects.toThrow(
       "Unable to restore secrets from the restic repository: no snapshot",
     );
+  });
+});
+
+describe("ResticClient testConnection", () => {
+  it("should report an empty repository", async () => {
+    const runner: ResticRunner = async () =>
+      result({ code: 10, stderr: "Fatal: unable to open config file" });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({ status: "empty" });
+  });
+
+  it("should report the snapshot count and latest snapshot time", async () => {
+    const snapshots: ResticSnapshot[] = [
+      { id: "aaaaaaaaaa", time: "2026-01-01T10:00:00Z" },
+      { id: "bbbbbbbbbb", time: "2026-02-01T10:00:00Z" },
+    ];
+    const runner: ResticRunner = async () =>
+      result({ stdout: JSON.stringify(snapshots) });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({
+      status: "ok",
+      snapshotCount: 2,
+      latestSnapshotTime: "2026-02-01T10:00:00Z",
+    });
+  });
+
+  it("should report a single snapshot without pluralization", async () => {
+    const snapshots: ResticSnapshot[] = [
+      { id: "aaaaaaaaaa", time: "2026-01-01T10:00:00Z" },
+    ];
+    const runner: ResticRunner = async () =>
+      result({ stdout: JSON.stringify(snapshots) });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({
+      status: "ok",
+      snapshotCount: 1,
+      latestSnapshotTime: "2026-01-01T10:00:00Z",
+    });
+  });
+
+  it("should report a sanitized error on credential failure", async () => {
+    const runner: ResticRunner = async () =>
+      result({ code: 1, stderr: "unable to access bucket: access denied" });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({
+      status: "error",
+      message: "unable to access bucket: access denied",
+    });
+  });
+
+  it("should report a timeout as an error", async () => {
+    const runner: ResticRunner = async () => result({ timedOut: true });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({
+      status: "error",
+      message:
+        "The connection test timed out after 30 seconds: the endpoint may be unreachable",
+    });
+  });
+
+  it("should report an unparsable snapshots output as an error", async () => {
+    const runner: ResticRunner = async () => result({ stdout: "not json" });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({
+      status: "error",
+      message: "Unable to parse restic snapshots output",
+    });
+  });
+
+  it("should invoke snapshots with the connection test timeout", async () => {
+    const captured: { args: string[]; options?: unknown }[] = [];
+    const runner: ResticRunner = async (_command, args, _env, _cwd, options) => {
+      captured.push({ args, options });
+      return result({ stdout: "[]" });
+    };
+    const client = new ResticClient(makeProject(), runner);
+    await client.testConnection();
+    expect(captured.length).toBe(1);
+    expect(captured[0].args.slice(-2)).toEqual(["snapshots", "--json"]);
+    expect(captured[0].options).toEqual({
+      timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
+    });
+    expect(CONNECTION_TEST_TIMEOUT_MS).toBe(30_000);
   });
 });
 
