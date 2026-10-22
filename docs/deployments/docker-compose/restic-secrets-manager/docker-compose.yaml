@@ -5,9 +5,11 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # WARNING: replace with a strong random key before deploying
-      # (e.g. `openssl rand -base64 48`):
-      - JWT_KEY=CHANGE_ME
+      # Optional: set a strong random key (e.g. `openssl rand -base64 48`) to
+      # manage the JWT signing key yourself. When empty, a key is generated
+      # once and stored in the database. Changing the key invalidates all
+      # issued sessions.
+      - JWT_KEY=${JWT_KEY:-}
     volumes:
       - ./data:/data
     restart: unless-stopped

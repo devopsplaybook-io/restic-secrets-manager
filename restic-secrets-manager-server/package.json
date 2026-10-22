@@ -12,12 +12,13 @@
     "dev": "tsx watch ./src/App.ts"
   },
   "dependencies": {
-    "@devopsplaybook.io/common-utils": "^1.15.1",
+    "@devopsplaybook.io/common-utils": "^2.0.0",
     "@devopsplaybook.io/otel-utils": "^1.5.1",
     "@devopsplaybook.io/otel-utils-fastify": "^1.4.1",
     "@fastify/compress": "^9.2.2",
     "@fastify/cors": "^11.3.1",
     "@fastify/static": "^10.1.6",
+    "@opentelemetry/sdk-trace": "^3.0.0",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^13.0.3",
     "fastify": "^5.12.7",

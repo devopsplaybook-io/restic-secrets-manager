@@ -40,7 +40,7 @@ cd restic-secrets-manager/docs/deployments/kubernetes/restic-secrets-manager-wit
 kubectl kustomize . | kubectl apply -f -
 ```
 
-> **Warning:** Before deploying, replace the placeholder values in [`base/secret.yaml`](../restic-secrets-manager/base/secret.yaml) (the `JWT_KEY` of restic-secrets-manager) and in [`cloud-sync-secret.yaml`](./cloud-sync-secret.yaml) (repository URL, password and S3 credentials).
+> **Warning:** Before deploying, replace the placeholder values in [`cloud-sync-secret.yaml`](./cloud-sync-secret.yaml) (repository URL, password and S3 credentials). `JWT_KEY` in [`base/secret.yaml`](../restic-secrets-manager/base/secret.yaml) is optional and empty by default (key generated and stored in the database); set it to manage the signing key yourself.
 
 ## Usage
 

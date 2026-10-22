@@ -50,11 +50,22 @@ function secretFixture(overrides: Partial<Secret> = {}): Secret {
   return Object.assign(secret, overrides);
 }
 
-/** Mirrors the real ProjectAccessEnsure denial (403 + false, no throw). */
+/** Mirrors the real ProjectAccessEnsure denial (403 + null, no throw). */
 function denyAccess(): void {
   ensureMock.mockImplementation(async (_req: unknown, res: any) => {
-    res.status(403).send({ error: "Access Denied" });
-    return false;
+    res.status(403).send({ error: "Access Denied", code: "FORBIDDEN" });
+    return null;
+  });
+}
+
+/** Mirrors the real ProjectAccessEnsure 401 (no live user). */
+function denyUnauthenticated(): void {
+  ensureMock.mockImplementation(async (_req: unknown, res: any) => {
+    res.status(401).send({
+      error: "Authentication Required",
+      code: "UNAUTHENTICATED",
+    });
+    return null;
   });
 }
 
@@ -77,7 +88,18 @@ describe("authorization", () => {
     denyAccess();
     const res = await fastify.inject({ method: "GET", url: "/p1/secrets" });
     expect(res.statusCode).toBe(403);
-    expect(res.json()).toEqual({ error: "Access Denied" });
+    expect(res.json()).toEqual({ error: "Access Denied", code: "FORBIDDEN" });
+    expect(listMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 401 and skip the data layer when there is no live user", async () => {
+    denyUnauthenticated();
+    const res = await fastify.inject({ method: "GET", url: "/p1/secrets" });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({
+      error: "Authentication Required",
+      code: "UNAUTHENTICATED",
+    });
     expect(listMock).not.toHaveBeenCalled();
   });
 });
@@ -267,5 +289,67 @@ describe("DELETE /:id/secrets/:secretId", () => {
     expect(res.statusCode).toBe(200);
     expect(deleteMock).toHaveBeenCalledWith(undefined, "s1");
     expect(hashRefreshMock).toHaveBeenCalledWith(undefined, "p1");
+  });
+});
+
+describe("anti-caching headers", () => {
+  function expectNoStore(res: any): void {
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["pragma"]).toBe("no-cache");
+    expect(res.headers["vary"]).toBe("Authorization");
+  }
+
+  it("should send no-store headers on the secret list", async () => {
+    listMock.mockResolvedValue([secretFixture()]);
+    const res = await fastify.inject({ method: "GET", url: "/p1/secrets" });
+    expect(res.statusCode).toBe(200);
+    expectNoStore(res);
+  });
+
+  it("should send no-store headers on the .env export", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { KEY: "value" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export",
+    });
+    expect(res.statusCode).toBe(200);
+    expectNoStore(res);
+  });
+
+  it("should send no-store headers on the JSON export", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { KEY: "value" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export?format=json",
+    });
+    expect(res.statusCode).toBe(200);
+    expectNoStore(res);
+  });
+
+  it("should send no-store headers when a created secret is echoed back", async () => {
+    getByNameMock.mockResolvedValue(null);
+    addMock.mockResolvedValue(undefined);
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/p1/secrets",
+      payload: { name: "api-key", data: { KEY: "value" } },
+    });
+    expect(res.statusCode).toBe(201);
+    expectNoStore(res);
+  });
+
+  it("should send no-store headers when an updated secret is echoed back", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1",
+      payload: { data: { A: "1" } },
+    });
+    expect(res.statusCode).toBe(200);
+    expectNoStore(res);
   });
 });

@@ -384,11 +384,7 @@ import api, { registerUnsavedEditsCapture } from "../../utils/api";
 import { copyTextToClipboardWithAutoClear } from "../../utils/clipboard";
 import { parseSecretImport } from "../../utils/secret-import";
 import { secretToEnvContent, secretToJsonContent } from "../../utils/secret-export";
-import {
-  saveSecretDraft,
-  loadSecretDraft,
-  clearSecretDraft,
-} from "../../utils/secret-draft";
+import { saveSecretDraft } from "../../utils/secret-draft";
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
@@ -462,11 +458,12 @@ onUnmounted(() => {
   window.removeEventListener("beforeunload", onBeforeUnload);
 });
 
-// Lost-work protection: on a 403 session expiry the API layer invokes this
+// Lost-work protection: on a 401 session expiry the API layer invokes this
 // hook before redirecting to /login, so the unsaved editor content is stored
-// in sessionStorage and can be restored after re-login.
+// in sessionStorage and can be restored after re-login by the same user.
 function captureUnsavedEdits() {
-  if (!showSecretModal.value || !isDirty.value) {
+  const userId = authStore.user?.userId;
+  if (!showSecretModal.value || !isDirty.value || !userId) {
     return;
   }
   saveSecretDraft({
@@ -475,6 +472,7 @@ function captureUnsavedEdits() {
     name: editingSecret.value?.name ?? secretForm.value.name,
     rows: secretForm.value.rows.map((row) => ({ key: row.key, value: row.value })),
     savedAt: new Date().toISOString(),
+    userId,
   });
 }
 
@@ -716,7 +714,7 @@ const showRestoreModal = restoreModal.isOpen;
 const pendingDraft = ref(null);
 
 function offerDraftRestore() {
-  const draft = loadSecretDraft();
+  const draft = authStore.pendingDraft;
   if (draft && draft.projectId === String(route.params.id)) {
     pendingDraft.value = draft;
     restoreModal.open();
@@ -726,14 +724,14 @@ function offerDraftRestore() {
 function discardDraftRestore() {
   restoreModal.close();
   pendingDraft.value = null;
-  clearSecretDraft();
+  authStore.clearPendingDraft();
 }
 
 function restoreDraftEdits() {
   const draft = pendingDraft.value;
   restoreModal.close();
   pendingDraft.value = null;
-  clearSecretDraft();
+  authStore.clearPendingDraft();
   if (!draft) {
     return;
   }
@@ -890,7 +888,7 @@ async function saveSecret() {
       });
     }
     closeSecretModal();
-    clearSecretDraft();
+    authStore.clearPendingDraft();
     await loadSecrets();
   } catch (e) {
     secretError.value = e.response?.data?.error || "Unable to save the secret";

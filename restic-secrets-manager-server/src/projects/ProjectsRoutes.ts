@@ -1,7 +1,4 @@
-import {
-  AuthGetUserSession,
-  AuthMustBeAdmin,
-} from "@devopsplaybook.io/common-utils";
+import { AuthMustBeAdmin } from "@devopsplaybook.io/common-utils";
 import { FastifyInstance } from "fastify";
 import { Project } from "../model/Project";
 import { OTelRequestSpan } from "../OTelContext";
@@ -23,8 +20,9 @@ import {
   SecretsDataDeleteByProjectId,
 } from "../secrets/SecretsData";
 import {
-  ProjectAccessCanAccess,
   ProjectAccessCanAccessMany,
+  ProjectAccessEnsure,
+  ProjectAccessGetUser,
 } from "../users/ProjectAccess";
 import {
   computeHasLocalChanges,
@@ -59,15 +57,15 @@ export class ProjectsRoutes {
 
     //
     fastify.get("/", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const projects = await ProjectsDataList(span);
       const counts = await SecretsDataCountsAll(span);
-      const visibleIds = await ProjectAccessCanAccessMany(
-        userSession,
+      const visibleIds = ProjectAccessCanAccessMany(
+        user,
         projects.map((project) => project.id),
       );
       const visible: Record<string, unknown>[] = [];
@@ -87,14 +85,14 @@ export class ProjectsRoutes {
     // Synchronization status of all the projects visible to the user, in
     // one call (each status is served by the short-TTL cache)
     fastify.get("/status", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const projects = await ProjectsDataList(span);
-      const visibleIds = await ProjectAccessCanAccessMany(
-        userSession,
+      const visibleIds = ProjectAccessCanAccessMany(
+        user,
         projects.map((project) => project.id),
       );
       const statuses: Record<string, unknown> = {};
@@ -161,9 +159,9 @@ export class ProjectsRoutes {
 
     //
     fastify.get<{ Params: { id: string } }>("/:id", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const project = await ProjectsDataGet(
         OTelRequestSpan(req),
@@ -172,11 +170,8 @@ export class ProjectsRoutes {
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (
-        userSession.role !== "admin" &&
-        !(await ProjectAccessCanAccess(userSession, project.id))
-      ) {
-        return res.status(403).send({ error: "Access Denied" });
+      if (!(await ProjectAccessEnsure(req, res, project.id))) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const secretCount = await SecretsDataCountForProject(span, project.id);
@@ -216,20 +211,17 @@ export class ProjectsRoutes {
 
     //
     fastify.post<{ Params: { id: string } }>("/:id/pull", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (
-        userSession.role !== "admin" &&
-        !(await ProjectAccessCanAccess(userSession, project.id))
-      ) {
-        return res.status(403).send({ error: "Access Denied" });
+      if (!(await ProjectAccessEnsure(req, res, project.id))) {
+        return;
       }
       try {
         const result = await ResticSyncPull(span, config, project);
@@ -237,7 +229,7 @@ export class ProjectsRoutes {
         SyncNotificationsNotify(
           "pull",
           project,
-          userSession.userName ?? "unknown",
+          user.name ?? "unknown",
           result.snapshotId,
         );
         return res.status(200).send(result);
@@ -248,33 +240,30 @@ export class ProjectsRoutes {
 
     //
     fastify.post<{ Params: { id: string } }>("/:id/push", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (
-        userSession.role !== "admin" &&
-        !(await ProjectAccessCanAccess(userSession, project.id))
-      ) {
-        return res.status(403).send({ error: "Access Denied" });
+      if (!(await ProjectAccessEnsure(req, res, project.id))) {
+        return;
       }
       try {
         const result = await ResticSyncPush(
           span,
           config,
           project,
-          userSession.userName,
+          user.name,
         );
         SyncStatusCacheInvalidate(project.id);
         SyncNotificationsNotify(
           "push",
           project,
-          userSession.userName ?? "unknown",
+          user.name ?? "unknown",
           result.snapshotId,
         );
         return res.status(200).send(result);
@@ -283,7 +272,7 @@ export class ProjectsRoutes {
           SyncNotificationsNotify(
             "push_conflict",
             project,
-            userSession.userName ?? "unknown",
+            user.name ?? "unknown",
           );
         }
         return sendSyncError(res, e);
@@ -293,20 +282,17 @@ export class ProjectsRoutes {
     // Synchronization status of a project: local modifications and
     // remote changes to pull (restic is invoked to check the repository)
     fastify.get<{ Params: { id: string } }>("/:id/status", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (
-        userSession.role !== "admin" &&
-        !(await ProjectAccessCanAccess(userSession, project.id))
-      ) {
-        return res.status(403).send({ error: "Access Denied" });
+      if (!(await ProjectAccessEnsure(req, res, project.id))) {
+        return;
       }
       try {
         const result = await SyncStatusCacheGet(span, project);
@@ -320,20 +306,17 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/snapshots",
       async (req, res) => {
-        const userSession = await AuthGetUserSession(req);
-        if (!userSession.isAuthenticated) {
-          return res.status(403).send({ error: "Access Denied" });
+        const user = await ProjectAccessGetUser(req, res);
+        if (!user) {
+          return;
         }
         const span = OTelRequestSpan(req);
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
         }
-        if (
-          userSession.role !== "admin" &&
-          !(await ProjectAccessCanAccess(userSession, project.id))
-        ) {
-          return res.status(403).send({ error: "Access Denied" });
+        if (!(await ProjectAccessEnsure(req, res, project.id))) {
+          return;
         }
         try {
           const snapshots = await ResticSyncListSnapshots(project);
@@ -348,20 +331,17 @@ export class ProjectsRoutes {
     fastify.post<{ Params: { id: string; snapshotId: string } }>(
       "/:id/snapshots/:snapshotId/restore",
       async (req, res) => {
-        const userSession = await AuthGetUserSession(req);
-        if (!userSession.isAuthenticated) {
-          return res.status(403).send({ error: "Access Denied" });
+        const user = await ProjectAccessGetUser(req, res);
+        if (!user) {
+          return;
         }
         const span = OTelRequestSpan(req);
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
         }
-        if (
-          userSession.role !== "admin" &&
-          !(await ProjectAccessCanAccess(userSession, project.id))
-        ) {
-          return res.status(403).send({ error: "Access Denied" });
+        if (!(await ProjectAccessEnsure(req, res, project.id))) {
+          return;
         }
         try {
           const result = await ResticSyncRestoreSnapshot(
@@ -374,7 +354,7 @@ export class ProjectsRoutes {
           SyncNotificationsNotify(
             "restore",
             project,
-            userSession.userName ?? "unknown",
+            user.name ?? "unknown",
             req.params.snapshotId,
           );
           return res.status(200).send(result);
@@ -389,20 +369,17 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/preview/pull",
       async (req, res) => {
-        const userSession = await AuthGetUserSession(req);
-        if (!userSession.isAuthenticated) {
-          return res.status(403).send({ error: "Access Denied" });
+        const user = await ProjectAccessGetUser(req, res);
+        if (!user) {
+          return;
         }
         const span = OTelRequestSpan(req);
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
         }
-        if (
-          userSession.role !== "admin" &&
-          !(await ProjectAccessCanAccess(userSession, project.id))
-        ) {
-          return res.status(403).send({ error: "Access Denied" });
+        if (!(await ProjectAccessEnsure(req, res, project.id))) {
+          return;
         }
         try {
           const preview = await ResticSyncPreviewPull(span, config, project);
@@ -418,20 +395,17 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/preview/discard",
       async (req, res) => {
-        const userSession = await AuthGetUserSession(req);
-        if (!userSession.isAuthenticated) {
-          return res.status(403).send({ error: "Access Denied" });
+        const user = await ProjectAccessGetUser(req, res);
+        if (!user) {
+          return;
         }
         const span = OTelRequestSpan(req);
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
         }
-        if (
-          userSession.role !== "admin" &&
-          !(await ProjectAccessCanAccess(userSession, project.id))
-        ) {
-          return res.status(403).send({ error: "Access Denied" });
+        if (!(await ProjectAccessEnsure(req, res, project.id))) {
+          return;
         }
         try {
           const preview = await ResticSyncPreviewDiscardLocalChanges(
@@ -451,20 +425,17 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string; snapshotId: string } }>(
       "/:id/preview/snapshots/:snapshotId",
       async (req, res) => {
-        const userSession = await AuthGetUserSession(req);
-        if (!userSession.isAuthenticated) {
-          return res.status(403).send({ error: "Access Denied" });
+        const user = await ProjectAccessGetUser(req, res);
+        if (!user) {
+          return;
         }
         const span = OTelRequestSpan(req);
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
         }
-        if (
-          userSession.role !== "admin" &&
-          !(await ProjectAccessCanAccess(userSession, project.id))
-        ) {
-          return res.status(403).send({ error: "Access Denied" });
+        if (!(await ProjectAccessEnsure(req, res, project.id))) {
+          return;
         }
         try {
           const preview = await ResticSyncPreviewRestoreSnapshot(
@@ -483,20 +454,17 @@ export class ProjectsRoutes {
     // Discard the local modifications that were not pushed: restore the
     // last synchronized snapshot
     fastify.post<{ Params: { id: string } }>("/:id/discard", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
       }
       const span = OTelRequestSpan(req);
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (
-        userSession.role !== "admin" &&
-        !(await ProjectAccessCanAccess(userSession, project.id))
-      ) {
-        return res.status(403).send({ error: "Access Denied" });
+      if (!(await ProjectAccessEnsure(req, res, project.id))) {
+        return;
       }
       try {
         const result = await ResticSyncDiscardLocalChanges(span, config, project);
@@ -504,7 +472,7 @@ export class ProjectsRoutes {
         SyncNotificationsNotify(
           "discard",
           project,
-          userSession.userName ?? "unknown",
+          user.name ?? "unknown",
           result.snapshotId,
         );
         return res.status(200).send(result);

@@ -20,6 +20,8 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] On secret creation, .env or JSON content can be pasted and imported: it is parsed into key/value rows, replacing the current ones (duplicate keys keep the last value, reported as a warning; parse errors are shown inline)
 - [x] Closing the secret editor with unsaved changes (Cancel, ×, backdrop, Esc), leaving the page, or closing the browser tab asks for a confirmation before the edits are discarded
 - [x] Unsaved editor changes survive a session expiry: they are preserved before the redirect to the login page and the user is offered to restore them when back on the project page after re-login
+- [x] Preserved unsaved edits expire after 15 minutes, are bound to the user who wrote them (never restored for another user) and are cleared on explicit logout and after a successful login
+- [x] Secret-bearing API responses (secret list, .env/JSON exports, create and update echoes) are sent with `Cache-Control: no-store`, `Pragma: no-cache` and `Vary: Authorization` so browsers and intermediaries never cache secret material
 
 ## Push (backup to restic repository)
 
@@ -56,6 +58,7 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
 - [x] Snapshot history entries carry the pusher attribution: the `pushed-by:` restic tag when present, falling back to the user and host reported by restic; older snapshots carry no attribution
 - [x] Restic synchronization failures surface richer error context: the last 10 output lines, capped at 1000 characters (credentials never appear, they are passed via environment variables)
+- [x] Temporary restic working directories are created with mode `0700` and the secret files inside with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup (a private tmpfs `TMP_DIR` is recommended so plaintext never reaches persistent disk)
 
 ## Programmatic access
 
@@ -63,4 +66,4 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Sync events (push, pull, snapshot restore, discard of local changes, push conflict) emit a notification through the ecosystem notifications server when the integration is configured (`NOTIFICATIONS_API_ENDPOINT` / `NOTIFICATIONS_API_TOKEN`, disabled by default)
 - [x] Notification failures never fail the synchronization and notification payloads never contain secret values
 
-Last spec review: 2026-10-18
+Last spec review: 2026-10-22

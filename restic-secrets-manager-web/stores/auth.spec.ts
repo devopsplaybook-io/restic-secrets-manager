@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
 import { useAuthStore } from "./auth";
+import { saveSecretDraft, type SecretDraft } from "../utils/secret-draft";
 
 const apiMock = vi.hoisted(() => ({
   post: vi.fn(),
@@ -33,8 +34,20 @@ function validPayload(): Record<string, unknown> {
   };
 }
 
+function sampleDraft(userId: string): SecretDraft {
+  return {
+    projectId: "p1",
+    secretId: "s1",
+    name: "api-keys",
+    rows: [{ key: "TOKEN", value: "abc" }],
+    savedAt: new Date().toISOString(),
+    userId,
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   setActivePinia(createPinia());
 });
 
@@ -142,5 +155,77 @@ describe("useAuthStore.login / logout", () => {
     expect(store.expiresAt).toBe(0);
     expect(localStorage.getItem("token")).toBeNull();
     expect(localStorage.getItem("user")).toBeNull();
+  });
+});
+
+describe("useAuthStore draft lifecycle", () => {
+  it("should move a same-user draft to memory and clear the storage on login", async () => {
+    const draft = sampleDraft("user-1");
+    saveSecretDraft(draft);
+    apiMock.post.mockResolvedValue({
+      data: {
+        token: "tok-1",
+        user: { id: "user-1", name: "alice", role: "admin" },
+      },
+    });
+    const store = useAuthStore();
+
+    await store.login("alice", "secret");
+
+    expect(store.pendingDraft).toEqual(draft);
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should drop a draft captured for another user on login", async () => {
+    saveSecretDraft(sampleDraft("user-2"));
+    apiMock.post.mockResolvedValue({
+      data: {
+        token: "tok-1",
+        user: { id: "user-1", name: "alice", role: "admin" },
+      },
+    });
+    const store = useAuthStore();
+
+    await store.login("alice", "secret");
+
+    expect(store.pendingDraft).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should clear the pending draft and the stored draft on logout", () => {
+    const draft = sampleDraft("user-1");
+    saveSecretDraft(draft);
+    const store = useAuthStore();
+    store.pendingDraft = draft;
+
+    store.logout();
+
+    expect(store.pendingDraft).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should clear the pending draft explicitly", () => {
+    const store = useAuthStore();
+    store.pendingDraft = sampleDraft("user-1");
+
+    store.clearPendingDraft();
+
+    expect(store.pendingDraft).toBeNull();
+  });
+
+  it("should clear drafts when an expired token logs the user out", () => {
+    saveSecretDraft(sampleDraft("user-1"));
+    localStorage.setItem(
+      "token",
+      makeToken({ ...validPayload(), exp: Math.floor(Date.now() / 1000) - 10 }),
+    );
+    const store = useAuthStore();
+    store.pendingDraft = sampleDraft("user-1");
+
+    store.init();
+
+    expect(store.isAuthenticated).toBe(false);
+    expect(store.pendingDraft).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
   });
 });

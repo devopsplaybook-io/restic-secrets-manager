@@ -24,6 +24,7 @@ import { SecretsHashBackfillAll } from "./secrets/SecretsHash";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
 import { registerStaticFiles } from "./StaticCacheHeaders";
 import { SyncNotificationsInit } from "./restic/SyncNotifications";
+import { cleanupStaleWorkDirs } from "./restic/TempWorkDir";
 import { AuthWiringSetOTel } from "./users/AuthWiring";
 import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
 
@@ -65,12 +66,19 @@ Promise.resolve().then(async () => {
 
   span.end();
 
+  // Remove plaintext working directories left behind by a crash
+  const staleWorkDirs = await cleanupStaleWorkDirs(config.TMP_DIR);
+  if (staleWorkDirs > 0) {
+    logger.info(`Removed ${staleWorkDirs} stale restic working director${staleWorkDirs === 1 ? "y" : "ies"}`);
+  }
+
   // APIs
 
   const fastify = Fastify({
     logger: {
       level: "error",
     },
+    trustProxy: config.TRUST_PROXY,
   });
 
   await fastify.register(fastifyCompress, {

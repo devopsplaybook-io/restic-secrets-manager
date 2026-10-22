@@ -1,7 +1,6 @@
-import { Span } from "@opentelemetry/sdk-trace-base";
+import type { Span } from "@opentelemetry/sdk-trace";
 import * as fse from "fs-extra";
 import * as path from "path";
-import { v4 as uuidv4 } from "uuid";
 import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";
@@ -14,6 +13,11 @@ import {
 import { latestSnapshot, ResticClient } from "./ResticClient";
 import { SyncLocksRun } from "./SyncLocks";
 import { ResticSyncError, readSnapshotSecrets } from "./SyncService";
+import {
+  createTemporaryWorkDir,
+  ensurePrivateDir,
+  restrictTreePermissions,
+} from "./TempWorkDir";
 
 /**
  * Preview of what a synchronization operation (pull, snapshot restore,
@@ -175,13 +179,10 @@ async function previewSnapshotContent(
   dataApi: SyncPreviewDataLayer,
 ): Promise<SyncPreviewResult> {
   const client = new ResticClient(project);
-  const workDir = path.join(
-    config.TMP_DIR,
-    `restic-secrets-manager-${uuidv4()}`,
-  );
+  const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
   try {
-    await fse.ensureDir(restoreDir);
+    await ensurePrivateDir(restoreDir);
 
     const snapshots = await client.snapshots();
     const target = snapshots.find((snapshot) => snapshot.id === snapshotId);
@@ -193,6 +194,7 @@ async function previewSnapshotContent(
     }
 
     await client.restore(target.id, restoreDir);
+    await restrictTreePermissions(restoreDir);
     const incoming = await readSnapshotSecrets(restoreDir);
     const current = await dataApi.SecretsDataListForProject(
       context,

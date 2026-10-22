@@ -1,7 +1,6 @@
-import { Span } from "@opentelemetry/sdk-trace-base";
+import type { Span } from "@opentelemetry/sdk-trace";
 import * as fse from "fs-extra";
 import * as path from "path";
-import { v4 as uuidv4 } from "uuid";
 import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";
@@ -25,6 +24,12 @@ import {
   ResticSnapshot,
 } from "./ResticClient";
 import { SyncLocksRun } from "./SyncLocks";
+import {
+  createTemporaryWorkDir,
+  ensurePrivateDir,
+  restrictTreePermissions,
+  writePrivateJson,
+} from "./TempWorkDir";
 
 export interface PullResult {
   snapshotId: string;
@@ -105,13 +110,10 @@ async function resticSyncPullUnlocked(
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(project);
-  const workDir = path.join(
-    config.TMP_DIR,
-    `restic-secrets-manager-${uuidv4()}`,
-  );
+  const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
   try {
-    await fse.ensureDir(restoreDir);
+    await ensurePrivateDir(restoreDir);
 
     const snapshots = await client.snapshots();
     const latest = latestSnapshot(snapshots);
@@ -123,6 +125,7 @@ async function resticSyncPullUnlocked(
     }
 
     await client.restoreLatest(restoreDir);
+    await restrictTreePermissions(restoreDir);
     const { secrets, keys } = await importPulledSecrets(
       context,
       project,
@@ -239,13 +242,10 @@ async function resticSyncPushUnlocked(
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(project);
-  const workDir = path.join(
-    config.TMP_DIR,
-    `restic-secrets-manager-${uuidv4()}`,
-  );
+  const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const secretsDir = path.join(workDir, "secrets");
   try {
-    await fse.ensureDir(secretsDir);
+    await ensurePrivateDir(secretsDir);
 
     const secrets = await dataApi.SecretsDataListForProject(
       context,
@@ -253,7 +253,7 @@ async function resticSyncPushUnlocked(
     );
     for (const secret of secrets) {
       const filePath = path.join(secretsDir, `${secret.name}.json`);
-      await fse.writeJson(filePath, secret.data, { spaces: 2 });
+      await writePrivateJson(filePath, secret.data);
     }
 
     // Initialize the repository when needed
@@ -434,13 +434,10 @@ async function resticSyncRestoreSnapshotUnlocked(
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(project);
-  const workDir = path.join(
-    config.TMP_DIR,
-    `restic-secrets-manager-${uuidv4()}`,
-  );
+  const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
   try {
-    await fse.ensureDir(restoreDir);
+    await ensurePrivateDir(restoreDir);
 
     const snapshots = await client.snapshots();
     const target = snapshots.find((snapshot) => snapshot.id === snapshotId);
@@ -452,6 +449,7 @@ async function resticSyncRestoreSnapshotUnlocked(
     }
 
     await client.restore(target.id, restoreDir);
+    await restrictTreePermissions(restoreDir);
     const { secrets, keys } = await importPulledSecrets(
       context,
       project,

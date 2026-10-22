@@ -55,7 +55,7 @@ cd restic-secrets-manager/docs/deployments/kubernetes/restic-secrets-manager
 kubectl kustomize . | kubectl apply -f -
 ```
 
-> **Warning:** Replace the `CHANGE_ME` value of `JWT_KEY` in [`base/secret.yaml`](./docs/deployments/kubernetes/restic-secrets-manager/base/secret.yaml) with a strong random key before deploying.
+> **Note:** `JWT_KEY` in [`base/secret.yaml`](./docs/deployments/kubernetes/restic-secrets-manager/base/secret.yaml) is empty by default, so the signing key is generated once and kept in the database. Set a strong random key to manage it yourself; changing it invalidates all issued sessions.
 
 > **Note:** The service is exposed as a `ClusterIP` inside the cluster; to access the web UI externally, use an Ingress or a NodePort service.
 
@@ -104,8 +104,13 @@ Configuration is provided by environment variables (a `config.json` file next to
 | Variable                               | Default                  | Description                                         |
 | -------------------------------------- | ------------------------ | --------------------------------------------------- |
 | `API_PORT`                             | `8080`                   | Server (API + web) port                             |
-| `JWT_KEY`                              | random, persisted        | JWT signing key — set it explicitly in production   |
+| `JWT_KEY`                              | database-managed         | JWT signing key — when set, it takes precedence over the key stored in the database; changing it invalidates issued sessions |
 | `JWT_VALIDITY_DURATION`                | `3600`                   | Session duration in seconds (1 hour, not renewed)   |
+| `JWT_REVOCATION_ENABLED`               | `true`                   | Invalidate sessions on role, scope or password changes and user deletion |
+| `AUTH_RATE_LIMIT_LOGIN_MAX`            | `10`                     | Login attempts allowed per window (per IP and username; `0` disables) |
+| `AUTH_RATE_LIMIT_REFRESH_MAX`          | `60`                     | Session refresh requests allowed per window (per IP; `0` disables) |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS`       | `60`                     | Rate-limit window in seconds                        |
+| `TRUST_PROXY`                          | `false`                  | Trust `X-Forwarded-For` from a reverse proxy (needed for correct client IPs behind a proxy) |
 | `CORS_POLICY_ORIGIN`                   |                          | CORS allowed origin                                 |
 | `DATA_DIR`                             | `/data`                  | Data directory (SQLite database)                    |
 | `DATABASE_TYPE`                        | `sqlite`                 | `sqlite` or `postgres`                              |
@@ -115,7 +120,7 @@ Configuration is provided by environment variables (a `config.json` file next to
 | `DATABASE_POSTGRES_PASSWORD`           |                          | PostgreSQL password                                 |
 | `DATABASE_POSTGRES_DATABASE`           |                          | PostgreSQL database                                 |
 | `LOG_LEVEL`                            | `info`                   | Log level                                           |
-| `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders |
+| `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders (use a private/tmpfs mount when possible) |
 | `NOTIFICATIONS_API_ENDPOINT`           |                          | Notifications server endpoint (empty = disabled)    |
 | `NOTIFICATIONS_API_TOKEN`              |                          | Notifications server API token                      |
 | `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`  |                          | OTLP HTTP endpoint for traces                       |
@@ -153,9 +158,15 @@ Deployment examples with real deployment files are available in [docs/deployment
 - Restic repository credentials and the repository password are stored in the application database and are never returned by the API nor displayed in the UI.
 - API tokens are stored as SHA-256 hashes only; the plaintext value is shown exactly once at creation. A token carries the permissions of its owning user, resolved live on each request.
 - Sync notification payloads never contain secret values.
-- Authorization checks read the user from the database on every request, so access changes take effect immediately.
+- Authorization resolves the live user and role from the database on every request (cached per request); the role claim in the JWT is never authoritative. Role, scope and password changes and user deletion invalidate existing sessions through the `users.tokenVersion` column, so access changes take effect immediately.
+- Unauthenticated requests answer `401` with a machine-readable `code` (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`); authenticated-but-forbidden requests answer `403` (`FORBIDDEN`). The web UI only logs out on `401`, so a forbidden action shows an inline error instead of ending the session.
+- Secret-bearing API responses (secret lists, environment/JSON exports, create and update echoes) carry `Cache-Control: no-store`, `Pragma: no-cache` and `Vary: Authorization` so browsers and intermediaries never store secret material.
+- Login and session refresh are rate limited per client IP (and per username for login), answering `429` with `Retry-After` when exceeded. Behind a reverse proxy set `TRUST_PROXY=true` so the real client IP is used.
+- Unsaved secret edits are kept in `sessionStorage` for at most 15 minutes, are bound to the user who wrote them and are cleared on explicit logout and after login. They are never sent to the server before the secrets are saved.
+- Temporary restic working directories are created with mode `0700` and files with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup. Prefer a private tmpfs mount for `TMP_DIR` so plaintext never touches persistent disk.
 - Push is rejected with HTTP 409 when the target repository holds a more recent snapshot, preventing accidental overwrites.
 - Sessions are short-lived (1 hour) and not renewed; expired sessions require a new login.
+- `JWT_KEY`: when set (environment or `config.json`), it is used as the signing key and is never written to the database; when empty, the key is generated once and stored in the database. Changing the configured key (or the database value when unset) invalidates all issued sessions, which is the intended rotation mechanism.
 
 ## License
 

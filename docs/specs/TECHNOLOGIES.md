@@ -5,8 +5,9 @@
 - TypeScript
 - Fastify 5 (REST API)
 - `@devopsplaybook.io/common-utils` (config, database facade, authentication, users management, OTel context)
+- `@fastify/rate-limit` (login and session-refresh throttling, `429` + `Retry-After`)
 - `@devopsplaybook.io/otel-utils-fastify` (OpenTelemetry request hooks)
-- SQLite via `better-sqlite3` (default) with optional PostgreSQL support
+- SQLite via `better-sqlite3` (default) with optional PostgreSQL support; schema migrations include `users.tokenVersion` for session revocation
 - `restic` CLI invoked for pull/push operations against S3-compatible repositories
 - Jest + ts-jest for unit tests, ESLint (typescript-eslint) for linting
 
@@ -29,4 +30,4 @@
 - Static assets are served as immutable; the SPA entry files (`index.html`, `sw.js`, `manifest.webmanifest`) are always revalidated so upgrades are picked up without stale-build chunk errors
 - GitHub Actions CI reusing the shared devopsplaybook.io workflows
 
-Last spec review: 2026-10-03
+Last spec review: 2026-10-22

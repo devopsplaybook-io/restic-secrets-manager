@@ -3,10 +3,12 @@ import {
   clearSecretDraft,
   loadSecretDraft,
   saveSecretDraft,
+  SECRET_DRAFT_TTL_MS,
+  takeSecretDraftForUser,
   type SecretDraft,
 } from "./secret-draft";
 
-function sampleDraft(): SecretDraft {
+function sampleDraft(overrides: Partial<SecretDraft> = {}): SecretDraft {
   return {
     projectId: "p1",
     secretId: "s1",
@@ -15,7 +17,9 @@ function sampleDraft(): SecretDraft {
       { key: "TOKEN", value: "abc" },
       { key: "CERT", value: "line1\nline2" },
     ],
-    savedAt: "2026-10-16T10:00:00.000Z",
+    savedAt: new Date().toISOString(),
+    userId: "user-1",
+    ...overrides,
   };
 }
 
@@ -36,9 +40,10 @@ describe("secret draft round-trip", () => {
     expect(loadSecretDraft()).toBeNull();
   });
 
-  it("should return null for corrupt JSON", () => {
+  it("should return null for corrupt JSON and remove the entry", () => {
     sessionStorage.setItem("secretDraft", "{not json");
     expect(loadSecretDraft()).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
   });
 
   it("should return null for a draft with an invalid shape", () => {
@@ -52,5 +57,56 @@ describe("secret draft round-trip", () => {
       }),
     );
     expect(loadSecretDraft()).toBeNull();
+  });
+});
+
+describe("secret draft TTL", () => {
+  it("should accept a draft saved within the TTL", () => {
+    const draft = sampleDraft({
+      savedAt: new Date(Date.now() - SECRET_DRAFT_TTL_MS + 60_000).toISOString(),
+    });
+    saveSecretDraft(draft);
+    expect(loadSecretDraft()).toEqual(draft);
+  });
+
+  it("should drop and remove a draft older than the TTL", () => {
+    saveSecretDraft(
+      sampleDraft({
+        savedAt: new Date(Date.now() - SECRET_DRAFT_TTL_MS - 60_000).toISOString(),
+      }),
+    );
+    expect(loadSecretDraft()).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should drop a draft with an unparseable savedAt", () => {
+    saveSecretDraft(sampleDraft({ savedAt: "not-a-date" }));
+    expect(loadSecretDraft()).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+});
+
+describe("secret draft user binding", () => {
+  it("should drop a draft without a userId", () => {
+    saveSecretDraft(sampleDraft({ userId: "" }));
+    expect(loadSecretDraft()).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should return a matching draft and always clear the storage", () => {
+    const draft = sampleDraft({ userId: "user-1" });
+    saveSecretDraft(draft);
+    expect(takeSecretDraftForUser("user-1")).toEqual(draft);
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should drop another user's draft", () => {
+    saveSecretDraft(sampleDraft({ userId: "user-2" }));
+    expect(takeSecretDraftForUser("user-1")).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should return null without a stored draft", () => {
+    expect(takeSecretDraftForUser("user-1")).toBeNull();
   });
 });

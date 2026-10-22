@@ -7,7 +7,7 @@ In the [`restic-secrets-manager`](./restic-secrets-manager) directory, you will 
 - [`base/pvc.yaml`](./restic-secrets-manager/base/pvc.yaml) — persistent volume for `/data` (SQLite database)
 - [`base/deployment.yaml`](./restic-secrets-manager/base/deployment.yaml) — application deployment (web UI and API served on port `8080`)
 - [`base/service.yaml`](./restic-secrets-manager/base/service.yaml) — ClusterIP service
-- [`base/secret.yaml`](./restic-secrets-manager/base/secret.yaml) — `JWT_KEY` secret (replace the placeholder value before deploying)
+- [`base/secret.yaml`](./restic-secrets-manager/base/secret.yaml) — optional `JWT_KEY` secret (empty by default; leave empty to let the application generate and store the key in the database)
 
 To launch the application in Kubernetes:
 
@@ -17,7 +17,7 @@ cd restic-secrets-manager/docs/deployments/kubernetes/restic-secrets-manager
 kubectl kustomize . | kubectl apply -f -
 ```
 
-> **Warning:** Before deploying, replace the `CHANGE_ME` value of `JWT_KEY` in [`base/secret.yaml`](./restic-secrets-manager/base/secret.yaml) with a strong random key (e.g. `openssl rand -base64 48`).
+> **Note:** `JWT_KEY` is empty in [`base/secret.yaml`](./restic-secrets-manager/base/secret.yaml), so the signing key is generated once and kept in the database. Set a strong random key (e.g. `openssl rand -base64 48`) to manage it yourself; changing it invalidates all issued sessions.
 
 On first start, the application detects that no user exists and walks you through the creation of the initial administrator account. The service is exposed as a `ClusterIP` inside the cluster; to access the web UI externally, use an Ingress or a NodePort service.
 

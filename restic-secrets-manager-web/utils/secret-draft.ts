@@ -1,5 +1,8 @@
 const DRAFT_STORAGE_KEY = "secretDraft";
 
+/** Unsaved edits kept across a session expiry expire after 15 minutes. */
+export const SECRET_DRAFT_TTL_MS = 15 * 60 * 1000;
+
 export interface SecretDraftRow {
   key: string;
   value: string;
@@ -11,6 +14,8 @@ export interface SecretDraft {
   name: string;
   rows: SecretDraftRow[];
   savedAt: string;
+  /** Drafts are bound to their owner: they never survive a user change. */
+  userId: string;
 }
 
 export function saveSecretDraft(draft: SecretDraft): void {
@@ -21,6 +26,10 @@ export function saveSecretDraft(draft: SecretDraft): void {
   }
 }
 
+/**
+ * Loads the stored draft. Expired (older than {@link SECRET_DRAFT_TTL_MS})
+ * or malformed drafts are removed and return null.
+ */
 export function loadSecretDraft(): SecretDraft | null {
   try {
     const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY);
@@ -35,8 +44,16 @@ export function loadSecretDraft(): SecretDraft | null {
       (parsed.secretId !== null && typeof parsed.secretId !== "string") ||
       typeof parsed.name !== "string" ||
       !Array.isArray(parsed.rows) ||
-      typeof parsed.savedAt !== "string"
+      typeof parsed.savedAt !== "string" ||
+      typeof parsed.userId !== "string" ||
+      parsed.userId.length === 0
     ) {
+      clearSecretDraft();
+      return null;
+    }
+    const savedAt = Date.parse(parsed.savedAt);
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > SECRET_DRAFT_TTL_MS) {
+      clearSecretDraft();
       return null;
     }
     const rows: SecretDraftRow[] = [];
@@ -47,6 +64,7 @@ export function loadSecretDraft(): SecretDraft | null {
         typeof row.key !== "string" ||
         typeof row.value !== "string"
       ) {
+        clearSecretDraft();
         return null;
       }
       rows.push({ key: row.key, value: row.value });
@@ -57,10 +75,25 @@ export function loadSecretDraft(): SecretDraft | null {
       name: parsed.name,
       rows,
       savedAt: parsed.savedAt,
+      userId: parsed.userId,
     };
   } catch {
+    clearSecretDraft();
     return null;
   }
+}
+
+/**
+ * Consumes the stored draft: the storage entry is always cleared and only a
+ * valid, unexpired draft belonging to `userId` is returned.
+ */
+export function takeSecretDraftForUser(userId: string): SecretDraft | null {
+  const draft = loadSecretDraft();
+  clearSecretDraft();
+  if (draft && draft.userId === userId) {
+    return draft;
+  }
+  return null;
 }
 
 export function clearSecretDraft(): void {
