@@ -1,6 +1,11 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { jwtDecode } from "jwt-decode";
 import api from "../utils/api";
+import {
+  clearSecretDraft,
+  takeSecretDraftForUser,
+  type SecretDraft,
+} from "../utils/secret-draft";
 
 export interface UserSession {
   isAuthenticated: boolean;
@@ -31,6 +36,9 @@ export const useAuthStore = defineStore("auth", {
     initialized: false,
     // Epoch milliseconds at which the current token expires (0 = unknown)
     expiresAt: 0,
+    // Same-user draft carried over a re-login, offered for restoration on the
+    // project page (memory only: never stored across users)
+    pendingDraft: null as SecretDraft | null,
   }),
 
   getters: {
@@ -89,13 +97,24 @@ export const useAuthStore = defineStore("auth", {
       }
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(res.data.user));
+      // The sessionStorage draft is always cleared at login; only a draft
+      // captured for this same user is kept in memory for the restore offer.
+      this.pendingDraft = takeSecretDraftForUser(
+        String(res.data.user?.id ?? ""),
+      );
       return res.data;
+    },
+
+    clearPendingDraft() {
+      this.pendingDraft = null;
     },
 
     logout() {
       this.token = "";
       this.user = null;
       this.expiresAt = 0;
+      this.pendingDraft = null;
+      clearSecretDraft();
       localStorage.removeItem("token");
       localStorage.removeItem("user");
     },

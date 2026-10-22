@@ -4,13 +4,13 @@ import { ProjectsRoutes } from "./ProjectsRoutes";
 
 jest.mock("@devopsplaybook.io/common-utils", () => ({
   ...jest.requireActual("@devopsplaybook.io/common-utils"),
-  AuthGetUserSession: jest.fn(),
   AuthMustBeAdmin: jest.fn(),
 }));
 
 jest.mock("../users/ProjectAccess", () => ({
-  ProjectAccessCanAccess: jest.fn(),
   ProjectAccessCanAccessMany: jest.fn(),
+  ProjectAccessEnsure: jest.fn(),
+  ProjectAccessGetUser: jest.fn(),
 }));
 
 // Keeps the route tests independent from the on-disk configuration
@@ -66,11 +66,12 @@ jest.mock("../restic/SyncNotifications", () => ({
   SyncNotificationsNotify: jest.fn(),
 }));
 
+import { AuthMustBeAdmin } from "@devopsplaybook.io/common-utils";
 import {
-  AuthGetUserSession,
-  AuthMustBeAdmin,
-} from "@devopsplaybook.io/common-utils";
-import { ProjectAccessCanAccessMany } from "../users/ProjectAccess";
+  ProjectAccessCanAccessMany,
+  ProjectAccessEnsure,
+  ProjectAccessGetUser,
+} from "../users/ProjectAccess";
 import {
   ProjectsDataAdd,
   ProjectsDataDelete,
@@ -107,8 +108,9 @@ import {
 } from "../restic/SyncStatusCache";
 import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 
-const userSessionMock = AuthGetUserSession as jest.Mock;
 const mustBeAdminMock = AuthMustBeAdmin as jest.Mock;
+const getUserMock = ProjectAccessGetUser as jest.Mock;
+const ensureMock = ProjectAccessEnsure as jest.Mock;
 const accessManyMock = ProjectAccessCanAccessMany as jest.Mock;
 const dataListMock = ProjectsDataList as jest.Mock;
 const dataAddMock = ProjectsDataAdd as jest.Mock;
@@ -144,21 +146,45 @@ function projectFixture(overrides: Partial<Project> = {}): Project {
   return Object.assign(project, overrides);
 }
 
-function adminSession() {
+function liveUser(overrides: Record<string, unknown> = {}) {
   return {
-    isAuthenticated: true,
-    userId: "admin-1",
-    userName: "admin",
-    role: "admin",
+    id: "user-1",
+    name: "alice",
+    role: "user",
     scopes: [],
+    ...overrides,
   };
+}
+
+function liveAdmin() {
+  return liveUser({ id: "admin-1", name: "admin", role: "admin" });
+}
+
+/** Mirrors the real ProjectAccessGetUser denial (401 + null, no throw). */
+function denyUnauthenticated(): void {
+  getUserMock.mockImplementation(async (_req: unknown, res: any) => {
+    res.status(401).send({
+      error: "Authentication Required",
+      code: "UNAUTHENTICATED",
+    });
+    return null;
+  });
+}
+
+/** Mirrors the real ProjectAccessEnsure denial (403 + null, no throw). */
+function denyForbidden(): void {
+  ensureMock.mockImplementation(async (_req: unknown, res: any) => {
+    res.status(403).send({ error: "Access Denied", code: "FORBIDDEN" });
+    return null;
+  });
 }
 
 let fastify: FastifyInstance;
 
 beforeEach(async () => {
   jest.clearAllMocks();
-  userSessionMock.mockResolvedValue(adminSession());
+  getUserMock.mockResolvedValue(liveAdmin());
+  ensureMock.mockImplementation(async () => liveAdmin());
   mustBeAdminMock.mockResolvedValue(undefined);
   fastify = Fastify();
   await new ProjectsRoutes().getRoutes(fastify);
@@ -180,7 +206,7 @@ describe("GET /", () => {
         ["p2", 5],
       ]),
     );
-    accessManyMock.mockResolvedValue(new Set(["p1"]));
+    accessManyMock.mockReturnValue(new Set(["p1"]));
 
     const res = await fastify.inject({ method: "GET", url: "/" });
 
@@ -199,16 +225,14 @@ describe("GET /", () => {
     expect(secretsListMock).not.toHaveBeenCalled();
   });
 
-  it("should return 403 when the session is not authenticated", async () => {
-    userSessionMock.mockResolvedValue({
-      isAuthenticated: false,
-      userId: undefined,
-      userName: undefined,
-      role: "user",
-      scopes: [],
-    });
+  it("should return 401 with UNAUTHENTICATED when there is no live user", async () => {
+    denyUnauthenticated();
     const res = await fastify.inject({ method: "GET", url: "/" });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({
+      error: "Authentication Required",
+      code: "UNAUTHENTICATED",
+    });
     expect(dataListMock).not.toHaveBeenCalled();
   });
 });
@@ -216,7 +240,7 @@ describe("GET /", () => {
 describe("GET /status", () => {
   it("should aggregate the sync status of the visible projects", async () => {
     dataListMock.mockResolvedValue([projectFixture({ id: "p1" })]);
-    accessManyMock.mockResolvedValue(new Set(["p1"]));
+    accessManyMock.mockReturnValue(new Set(["p1"]));
     cacheGetMock.mockResolvedValue({
       needsPull: true,
       hasLocalChanges: false,
@@ -237,7 +261,7 @@ describe("GET /status", () => {
 
   it("should report a per-project error without failing the request", async () => {
     dataListMock.mockResolvedValue([projectFixture({ id: "p1" })]);
-    accessManyMock.mockResolvedValue(new Set(["p1"]));
+    accessManyMock.mockReturnValue(new Set(["p1"]));
     cacheGetMock.mockRejectedValue(new Error("repository unreachable"));
 
     const res = await fastify.inject({ method: "GET", url: "/status" });
@@ -575,16 +599,11 @@ describe("preview endpoints", () => {
     expect(res.json()).toEqual({ error: "Project was never synchronized" });
   });
 
-  it("should return 403 when the session is not authenticated", async () => {
-    userSessionMock.mockResolvedValue({
-      isAuthenticated: false,
-      userId: undefined,
-      userName: undefined,
-      role: "user",
-      scopes: [],
-    });
+  it("should return 401 when there is no live user", async () => {
+    denyUnauthenticated();
     const res = await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe("UNAUTHENTICATED");
     expect(previewPullMock).not.toHaveBeenCalled();
   });
 
@@ -595,18 +614,100 @@ describe("preview endpoints", () => {
     expect(previewPullMock).not.toHaveBeenCalled();
   });
 
-  it("should return 403 when the user has no access to the project", async () => {
-    userSessionMock.mockResolvedValue({
-      isAuthenticated: true,
-      userId: "user-1",
-      userName: "alice",
-      role: "user",
-      scopes: [],
-    });
-    const { ProjectAccessCanAccess } = jest.requireMock("../users/ProjectAccess");
-    ProjectAccessCanAccess.mockResolvedValue(false);
+  it("should return 403 when the live user has no access to the project", async () => {
+    denyForbidden();
     const res = await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
     expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "Access Denied", code: "FORBIDDEN" });
     expect(previewPullMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("live authorization regressions", () => {
+  const projectBody = {
+    name: "New Project",
+    s3Endpoint: "s3.example.com",
+    s3Bucket: "bucket",
+    s3AccessKeyId: "access-key",
+    s3SecretAccessKey: "secret-key",
+    resticPassword: "restic-password",
+  };
+
+  it("should reject a demoted admin on admin-only routes with 403", async () => {
+    getUserMock.mockResolvedValue(liveUser({ role: "user", scopes: [] }));
+    mustBeAdminMock.mockImplementation(async (_req: unknown, res: any) => {
+      res.status(403).send({ error: "Access Denied", code: "FORBIDDEN" });
+      throw new Error("Access Denied");
+    });
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/",
+      payload: projectBody,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("FORBIDDEN");
+    expect(dataAddMock).not.toHaveBeenCalled();
+    expect(scopesAddMock).not.toHaveBeenCalled();
+  });
+
+  it("should deny a demoted admin the project access they had as admin", async () => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    denyForbidden();
+
+    const res = await fastify.inject({ method: "GET", url: "/p1" });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "Access Denied", code: "FORBIDDEN" });
+  });
+
+  it("should list only the projects allowed by the live scopes", async () => {
+    dataListMock.mockResolvedValue([
+      projectFixture({ id: "p1" }),
+      projectFixture({ id: "p2" }),
+    ]);
+    countsAllMock.mockResolvedValue(new Map());
+    accessManyMock.mockReturnValue(new Set(["p2"]));
+    getUserMock.mockResolvedValue(liveUser({ scopes: ["project:p2"] }));
+
+    const res = await fastify.inject({ method: "GET", url: "/" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().projects.map((p: any) => p.id)).toEqual(["p2"]);
+    expect(accessManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "user-1" }),
+      ["p1", "p2"],
+    );
+  });
+
+  it("should return 401 for a deleted user on a project route", async () => {
+    denyUnauthenticated();
+
+    const res = await fastify.inject({ method: "GET", url: "/p1" });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe("UNAUTHENTICATED");
+    expect(dataGetMock).not.toHaveBeenCalled();
+  });
+
+  it("should use the live user name as the push actor", async () => {
+    getUserMock.mockResolvedValue(liveUser({ name: "alice" }));
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    syncPushMock.mockResolvedValue({
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+
+    const res = await fastify.inject({ method: "POST", url: "/p1/push" });
+
+    expect(res.statusCode).toBe(200);
+    expect(syncPushMock.mock.calls[0][3]).toBe("alice");
+    expect(notifyMock).toHaveBeenCalledWith(
+      "push",
+      expect.anything(),
+      "alice",
+      "abc12345",
+    );
   });
 });

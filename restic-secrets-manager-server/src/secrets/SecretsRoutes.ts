@@ -17,6 +17,7 @@ import {
 } from "./SecretsData";
 import { ProjectAccessEnsure } from "../users/ProjectAccess";
 import { SecretsHashRefreshForProject } from "./SecretsHash";
+import { setSecretResponseHeaders } from "./SecretResponseHeaders";
 
 /**
  * Secrets routes, registered under the /api/projects prefix.
@@ -36,6 +37,7 @@ export class SecretsRoutes {
           OTelRequestSpan(req),
           req.params.id,
         );
+        setSecretResponseHeaders(res);
         return res
           .status(200)
           .send({ secrets: secrets.map((s) => s.toJson()) });
@@ -65,6 +67,7 @@ export class SecretsRoutes {
           .status(400)
           .send({ error: "Invalid format: env or json expected" });
       }
+      setSecretResponseHeaders(res);
       if (format === "json") {
         return res
           .status(200)
@@ -113,6 +116,7 @@ export class SecretsRoutes {
         throw e;
       }
       await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
+      setSecretResponseHeaders(res);
       return res.status(201).send({ secret: secret.toJson() });
     });
 
@@ -175,6 +179,7 @@ export class SecretsRoutes {
         await SecretsDataUpdateData(OTelRequestSpan(req), secret);
       }
       await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
+      setSecretResponseHeaders(res);
       return res.status(200).send({ secret: secret.toJson() });
     });
 

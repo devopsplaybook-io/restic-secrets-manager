@@ -4,7 +4,7 @@ import * as path from "path";
 import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";
 import { Config } from "../Config";
-import { Span } from "@opentelemetry/sdk-trace-base";
+import type { Span } from "@opentelemetry/sdk-trace";
 import { ResticSnapshot } from "./ResticClient";
 import { computeSecretsHash } from "../secrets/SecretsHash";
 import {
@@ -20,6 +20,16 @@ import {
   ResticSyncTestConnection,
 } from "./SyncService";
 
+jest.mock("./TempWorkDir", () => {
+  const actual = jest.requireActual("./TempWorkDir");
+  return {
+    ...actual,
+    createTemporaryWorkDir: jest.fn(actual.createTemporaryWorkDir),
+    restrictTreePermissions: jest.fn(actual.restrictTreePermissions),
+    writePrivateJson: jest.fn(actual.writePrivateJson),
+  };
+});
+
 jest.mock("./ResticClient", () => {
   const actual = jest.requireActual("./ResticClient");
   return {
@@ -29,6 +39,7 @@ jest.mock("./ResticClient", () => {
 });
 
 const ResticClientMock = jest.requireMock("./ResticClient").ResticClient;
+const tempWorkDir = jest.requireMock("./TempWorkDir");
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   const project = new Project();
@@ -272,6 +283,37 @@ describe("ResticSyncPull", () => {
       "snapshot-1",
       "2026-01-01T10:00:00Z",
       computeSecretsHash(secrets),
+    );
+  });
+
+  it("should restrict restored files to 0600 before reading them", async () => {
+    mockClient({
+      snapshots: jest
+        .fn()
+        .mockResolvedValue([
+          { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+        ]),
+      restoreLatest: jest.fn().mockImplementation(async (target: string) => {
+        const file = path.join(target, "api.json");
+        await fse.writeJson(file, { K1: "v1" });
+        await fse.chmod(file, 0o644);
+        await fse.chmod(target, 0o755);
+      }),
+    });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await ResticSyncPull(span(), testConfig(), makeProject(), dataApi);
+
+    expect(tempWorkDir.createTemporaryWorkDir).toHaveBeenCalledWith(
+      os.tmpdir(),
+    );
+    expect(tempWorkDir.restrictTreePermissions).toHaveBeenCalledWith(
+      expect.stringContaining("restore"),
     );
   });
 

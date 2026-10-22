@@ -1,4 +1,4 @@
-import { Span } from "@opentelemetry/sdk-trace-base";
+import type { Span } from "@opentelemetry/sdk-trace";
 import { Project } from "../model/Project";
 import { SyncStatusResult } from "./SyncService";
 import {

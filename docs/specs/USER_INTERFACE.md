@@ -16,9 +16,12 @@
 
 ## Behavior
 
-- [x] When the session expires (1 hour, no renewal), the user is redirected to the login page
+- [x] When the session expires or is rejected (HTTP `401`, except a failed login) the user is logged out and redirected to the login page
+- [x] A forbidden action (HTTP `403`, e.g. a role or project access revoked in the meantime) shows an inline error and does not log the user out
+- [x] A failed login shows a clear error message on the login page without clearing an existing session in other tabs
 - [x] Shortly before the session ends (5 minutes or less remaining), a warning banner shows the time left and invites the user to save their work
 - [x] After a session-expiry redirect, logging in sends the user back to the page they were working on
+- [x] Preserved unsaved edits expire after 15 minutes, are restored only for the user who wrote them and are cleared on logout and after login
 - [x] Destructive actions (delete project, delete user, delete secret, revoke API token) ask for confirmation
 - [x] A newly created API token is displayed exactly once, with a copy action (no auto-clear) and a warning that it will not be shown again
 - [x] Push conflicts (more recent snapshot in the repository) surface a clear error message
@@ -70,4 +73,4 @@
 - [x] Closing the editor (Cancel, ×, backdrop, Esc), navigating away or closing the tab with unsaved changes asks for a confirmation ("Discard unsaved changes?") before discarding them
 - [x] When unsaved edits existed during a session-expiry redirect, reopening the project page offers to restore them (as an edit of the same secret when it still exists, otherwise as a new secret with the name prefilled)
 
-Last spec review: 2026-10-18
+Last spec review: 2026-10-22

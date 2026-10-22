@@ -1,4 +1,4 @@
-import { Span } from "@opentelemetry/sdk-trace-base";
+import type { Span } from "@opentelemetry/sdk-trace";
 import * as crypto from "crypto";
 import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";

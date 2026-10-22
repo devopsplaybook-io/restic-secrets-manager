@@ -16,9 +16,9 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Pages can register a hook invoked when a 403 (expired session) is about to
-// redirect to /login, so unsaved editor content can be preserved (e.g. in
-// sessionStorage via secret-draft.ts) and restored after re-login.
+// Pages can register a hook invoked when a 401 (expired/invalid session) is
+// about to redirect to /login, so unsaved editor content can be preserved
+// (e.g. in sessionStorage via secret-draft.ts) and restored after re-login.
 type UnsavedEditsCapture = () => void;
 
 let unsavedEditsCapture: UnsavedEditsCapture | null = null;
@@ -38,7 +38,12 @@ export function registerUnsavedEditsCapture(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 403) {
+    const status = error.response?.status;
+    const code = error.response?.data?.code;
+    // A failed login is a 401 too, but it must not destroy an existing
+    // session or redirect: the login page shows the error inline.
+    const isLoginFailure = status === 401 && code === "INVALID_CREDENTIALS";
+    if (status === 401 && !isLoginFailure) {
       if (window.location.pathname !== "/login") {
         try {
           sessionStorage.setItem(
@@ -62,6 +67,8 @@ api.interceptors.response.use(
         window.location.href = "/login";
       }
     }
+    // 403 means authenticated-but-forbidden: the session stays valid and the
+    // calling page shows the error inline.
     return Promise.reject(error);
   },
 );

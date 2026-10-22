@@ -1,64 +1,72 @@
 import {
-  AuthGetUserSession,
-  UserSession,
-  UsersDataGet,
+  AUTH_ERROR_CODE_FORBIDDEN,
+  AUTH_ERROR_CODE_UNAUTHENTICATED,
+  AuthGetLiveUser,
+  User,
 } from "@devopsplaybook.io/common-utils";
 import { projectScope } from "../projects/ProjectScopes";
 
 /**
- * Indirection points over the data/auth layers so tests can stub them.
+ * Indirection point over the auth layer so tests can stub it.
+ * The live user is resolved from the database by the guards; the role and
+ * scopes carried by the JWT are display data only and must never be used
+ * for authorization.
  */
 export const ProjectAccessApi = {
-  GetUserSession: (req: unknown): Promise<UserSession> =>
-    AuthGetUserSession(req),
-  GetUser: (id: string) => UsersDataGet(undefined, id),
+  GetLiveUser: (req: unknown): Promise<User | null> => AuthGetLiveUser(req),
 };
 
 /**
- * Returns true when the user session is allowed to access the project.
- * Admins can access all projects; regular users need the project scope.
- * Authorization is checked against the database so access changes take
- * effect immediately without requiring a new session.
+ * Returns the live user of the request, or sends a 401 and returns null
+ * when the request is unauthenticated, the user was deleted or the session
+ * was invalidated.
  */
-export async function ProjectAccessCanAccess(
-  userSession: UserSession,
-  projectId: string,
+export async function ProjectAccessGetUser(
+  req: any,
+  res: any,
   api: any = ProjectAccessApi,
-): Promise<boolean> {
-  if (!userSession.isAuthenticated || !userSession.userId) {
-    return false;
+): Promise<User | null> {
+  const user = await api.GetLiveUser(req);
+  if (!user) {
+    res.status(401).send({
+      error: "Authentication Required",
+      code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+    });
+    return null;
   }
-  if (userSession.role === "admin") {
-    return true;
-  }
-  const user = await api.GetUser(userSession.userId);
+  return user;
+}
+
+/**
+ * Returns true when the live user is allowed to access the project.
+ * Admins can access all projects; regular users need the project scope.
+ */
+export function ProjectAccessCanAccess(user: User, projectId: string): boolean {
   if (!user) {
     return false;
   }
-  const scopes: string[] = user.scopes || [];
+  if (user.role === "admin") {
+    return true;
+  }
+  const scopes = user.scopes || [];
   return scopes.includes(projectScope(projectId));
 }
 
 /**
- * Returns the ids of the projects the session is allowed to access among
- * the provided ones, resolving the user record only once (list views).
+ * Returns the ids of the projects the live user is allowed to access among
+ * the provided ones (list views).
  */
-export async function ProjectAccessCanAccessMany(
-  userSession: UserSession,
+export function ProjectAccessCanAccessMany(
+  user: User,
   projectIds: string[],
-  api: any = ProjectAccessApi,
-): Promise<Set<string>> {
-  if (!userSession.isAuthenticated || !userSession.userId) {
-    return new Set();
-  }
-  if (userSession.role === "admin") {
-    return new Set(projectIds);
-  }
-  const user = await api.GetUser(userSession.userId);
+): Set<string> {
   if (!user) {
     return new Set();
   }
-  const scopes: string[] = user.scopes || [];
+  if (user.role === "admin") {
+    return new Set(projectIds);
+  }
+  const scopes = user.scopes || [];
   return new Set(
     projectIds.filter((projectId) => scopes.includes(projectScope(projectId))),
   );
@@ -66,19 +74,26 @@ export async function ProjectAccessCanAccessMany(
 
 /**
  * Ensures the current request is authenticated AND allowed to access the
- * given project. Sends a 403 response and returns false when access is
- * denied; callers must return without responding again.
+ * given project. Sends 401 when unauthenticated and 403 when forbidden, then
+ * returns null; callers must return without responding again. On success the
+ * live user is returned.
  */
 export async function ProjectAccessEnsure(
   req: any,
   res: any,
   projectId: string,
   api: any = ProjectAccessApi,
-): Promise<boolean> {
-  const userSession = await api.GetUserSession(req);
-  if (!(await ProjectAccessCanAccess(userSession, projectId, api))) {
-    res.status(403).send({ error: "Access Denied" });
-    return false;
+): Promise<User | null> {
+  const user = await ProjectAccessGetUser(req, res, api);
+  if (!user) {
+    return null;
   }
-  return true;
+  if (!ProjectAccessCanAccess(user, projectId)) {
+    res.status(403).send({
+      error: "Access Denied",
+      code: AUTH_ERROR_CODE_FORBIDDEN,
+    });
+    return null;
+  }
+  return user;
 }
