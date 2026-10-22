@@ -31,6 +31,12 @@ Each project is defined with the settings required to connect to a restic reposi
 - [x] Before creation, a confirmation summary step shows the settings that were entered (secret key and restic password masked) and warns that the settings cannot be changed after creation
 - [x] Project settings remain immutable: a mistake is corrected by deleting and re-creating the project, which the test and review steps aim to make rare
 
+## Synchronization lifecycle
+
+- [x] Pull, push, snapshot restore, discard and their previews are serialized per project: an in-process queue plus a PostgreSQL advisory lock when `DATABASE_TYPE=postgres`; SQLite deployments stay single-replica
+- [x] Every restic invocation of a synchronization (snapshots, restore, backup, init) is bounded by a configurable timeout (`RESTIC_TIMEOUT_*`); on expiry the process is terminated (SIGTERM, then SIGKILL after `RESTIC_KILL_GRACE_MS`) and the API answers HTTP 504
+- [x] A client disconnect aborts the restic process of its request; the project lock and status-cache slots are released on success, error and timeout
+
 ## Visibility
 
 - [x] Admins see all projects

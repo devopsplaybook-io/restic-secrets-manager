@@ -11,11 +11,18 @@
       <div v-if="loading" class="loading-state">
         <i class="bi bi-arrow-repeat spin"/> Computing preview…
       </div>
-      <SyncPreviewRows v-else-if="preview" :preview="preview"/>
+      <template v-else-if="preview">
+        <div v-if="preview.snapshotId" class="pinned-snapshot">
+          <i class="bi bi-pin-angle-fill"/>
+          Snapshot <code>{{ shortSnapshotId(preview.snapshotId) }}</code>
+          <span v-if="preview.snapshotTime"> · {{ formatTime(preview.snapshotTime) }}</span>
+        </div>
+        <SyncPreviewRows :preview="preview"/>
+      </template>
 
       <footer>
         <button class="secondary" :disabled="executing" @click="close">Cancel</button>
-        <button class="contrast" :disabled="loading || executing" @click="execute">
+        <button class="contrast" :disabled="!canExecute" @click="execute">
           {{ executing ? "Working…" : confirmLabel }}
         </button>
       </footer>
@@ -25,6 +32,10 @@
 
 <script setup>
 import api from "../utils/api";
+import {
+  buildSyncExecutionRequest,
+  shortSnapshotId,
+} from "../utils/sync-preview";
 
 const props = defineProps({
   project: { type: Object, required: true },
@@ -54,6 +65,23 @@ const CONFIRM_LABELS = {
 
 const title = computed(() => TITLES[props.mode] || "Change Preview");
 const confirmLabel = computed(() => CONFIRM_LABELS[props.mode] || "Confirm");
+
+// The previewed snapshot is the pin executed by the operation. A pull
+// without a pin (preview not loaded) cannot be confirmed.
+const pinnedSnapshotId = computed(() =>
+  props.mode === "snapshot"
+    ? props.snapshotId
+    : preview.value?.snapshotId || "",
+);
+const canExecute = computed(() => {
+  if (loading.value || executing.value || !preview.value) {
+    return false;
+  }
+  if (props.mode === "pull") {
+    return !!preview.value.snapshotId;
+  }
+  return props.mode === "snapshot" ? !!props.snapshotId : true;
+});
 
 onMounted(async () => {
   modal.open();
@@ -87,19 +115,18 @@ async function loadPreview() {
 }
 
 async function execute() {
+  if (!canExecute.value) {
+    return;
+  }
   executing.value = true;
   error.value = "";
   try {
-    let res;
-    if (props.mode === "pull") {
-      res = await api.post(`/projects/${props.project.id}/pull`);
-    } else if (props.mode === "discard") {
-      res = await api.post(`/projects/${props.project.id}/discard`);
-    } else {
-      res = await api.post(
-        `/projects/${props.project.id}/snapshots/${props.snapshotId}/restore`,
-      );
-    }
+    const request = buildSyncExecutionRequest(
+      props.mode,
+      props.project.id,
+      pinnedSnapshotId.value,
+    );
+    const res = await api.post(request.url, request.body);
     modal.close();
     emit("done", resultMessage(res.data));
   } catch (e) {
@@ -109,8 +136,12 @@ async function execute() {
   }
 }
 
+function formatTime(iso) {
+  return new Date(iso).toLocaleString();
+}
+
 function resultMessage(data) {
-  const snapshot = data.snapshotId ? data.snapshotId.substring(0, 8) : "";
+  const snapshot = shortSnapshotId(data.snapshotId);
   if (props.mode === "pull") {
     return `Pulled ${data.secrets} secret(s) and ${data.keys} key(s) from snapshot ${snapshot}.`;
   }
@@ -129,6 +160,16 @@ function resultMessage(data) {
 .loading-state {
   color: var(--color-text-muted);
   padding: var(--space-lg) 0;
+}
+
+.pinned-snapshot {
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-sm);
+  font-size: 0.9rem;
+}
+
+.pinned-snapshot code {
+  color: var(--color-text);
 }
 
 .spin {

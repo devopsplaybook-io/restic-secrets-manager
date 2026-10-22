@@ -95,3 +95,26 @@ export function keyValueHint(key) {
 export function pusherLabel(snapshot) {
   return snapshot.pushedBy || "unknown pusher";
 }
+
+/**
+ * Short display form of a restic snapshot id (ids are 64 hex characters).
+ */
+export function shortSnapshotId(snapshotId) {
+  return typeof snapshotId === "string" ? snapshotId.substring(0, 8) : "";
+}
+
+/**
+ * Request executing a previewed synchronization operation. A pull always
+ * carries the snapshot id pinned by its preview: the server rejects it
+ * with 409 when the repository moved since the preview.
+ */
+export function buildSyncExecutionRequest(mode, projectId, snapshotId) {
+  const base = `/projects/${projectId}`;
+  if (mode === "pull") {
+    return { url: `${base}/pull`, body: { snapshotId } };
+  }
+  if (mode === "discard") {
+    return { url: `${base}/discard` };
+  }
+  return { url: `${base}/snapshots/${snapshotId}/restore` };
+}

@@ -1,6 +1,29 @@
+import type { Span } from "@opentelemetry/sdk-trace";
+import { DbUtilsWithLock } from "../utils-std-ts/DbUtils";
 import { SyncLocksRun } from "./SyncLocks";
 
+jest.mock("../utils-std-ts/DbUtils", () => ({
+  DbUtilsWithLock: jest.fn(
+    (_lock: string, task: () => Promise<unknown>) => task(),
+  ),
+}));
+
+const dbLockMock = DbUtilsWithLock as jest.Mock;
+
 describe("SyncLocksRun", () => {
+  it("should run the task under the per-project database advisory lock", async () => {
+    const context = { name: "test" } as unknown as Span;
+    const task = jest.fn().mockResolvedValue("ok");
+
+    await expect(SyncLocksRun("project-42", task, context)).resolves.toBe("ok");
+
+    expect(dbLockMock).toHaveBeenCalledWith(
+      "restic-secrets-manager:project-sync:project-42",
+      task,
+      context,
+    );
+  });
+
   it("should run tasks of the same project strictly in order", async () => {
     const events: string[] = [];
     const first = SyncLocksRun("p1", async () => {

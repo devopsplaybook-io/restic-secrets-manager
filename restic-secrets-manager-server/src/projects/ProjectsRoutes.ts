@@ -46,6 +46,7 @@ import {
   SyncStatusCacheGet,
   SyncStatusCacheInvalidate,
 } from "../restic/SyncStatusCache";
+import { RequestAbortSignal } from "../restic/RequestAbort";
 import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 import { Config } from "../Config";
 
@@ -101,7 +102,11 @@ export class ProjectsRoutes {
           .filter((project) => visibleIds.has(project.id))
           .map(async (project) => {
             try {
-              statuses[project.id] = await SyncStatusCacheGet(span, project);
+              statuses[project.id] = await SyncStatusCacheGet(
+                span,
+                project,
+                config,
+              );
             } catch {
               statuses[project.id] = { error: true };
             }
@@ -152,7 +157,11 @@ export class ProjectsRoutes {
           return res.status(400).send({ error: errors.join(" ") });
         }
         const project = Project.fromJson(body) as Project;
-        const result = await ResticSyncTestConnection(project);
+        const result = await ResticSyncTestConnection(
+          project,
+          config,
+          RequestAbortSignal(req.raw, res.raw),
+        );
         return res.status(200).send({ result });
       },
     );
@@ -209,8 +218,13 @@ export class ProjectsRoutes {
       return res.status(200).send({});
     });
 
-    //
-    fastify.post<{ Params: { id: string } }>("/:id/pull", async (req, res) => {
+    // Pull the pinned snapshot produced by a pull preview. The request must
+    // carry the previewed snapshot id: the pull is rejected with 409 when
+    // the repository latest changed since the preview.
+    fastify.post<{
+      Params: { id: string };
+      Body: { snapshotId?: unknown };
+    }>("/:id/pull", async (req, res) => {
       const user = await ProjectAccessGetUser(req, res);
       if (!user) {
         return;
@@ -223,8 +237,22 @@ export class ProjectsRoutes {
       if (!(await ProjectAccessEnsure(req, res, project.id))) {
         return;
       }
+      const snapshotId = req.body?.snapshotId;
+      if (typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
+        return res.status(400).send({
+          error:
+            "snapshotId is required: preview the pull and send the previewed snapshot id",
+        });
+      }
       try {
-        const result = await ResticSyncPull(span, config, project);
+        const result = await ResticSyncPull(
+          span,
+          config,
+          project,
+          snapshotId,
+          undefined,
+          RequestAbortSignal(req.raw, res.raw),
+        );
         SyncStatusCacheInvalidate(project.id);
         SyncNotificationsNotify(
           "pull",
@@ -258,6 +286,8 @@ export class ProjectsRoutes {
           config,
           project,
           user.name,
+          undefined,
+          RequestAbortSignal(req.raw, res.raw),
         );
         SyncStatusCacheInvalidate(project.id);
         SyncNotificationsNotify(
@@ -295,7 +325,7 @@ export class ProjectsRoutes {
         return;
       }
       try {
-        const result = await SyncStatusCacheGet(span, project);
+        const result = await SyncStatusCacheGet(span, project, config);
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);
@@ -319,7 +349,11 @@ export class ProjectsRoutes {
           return;
         }
         try {
-          const snapshots = await ResticSyncListSnapshots(project);
+          const snapshots = await ResticSyncListSnapshots(
+            project,
+            config,
+            RequestAbortSignal(req.raw, res.raw),
+          );
           return res.status(200).send({ snapshots });
         } catch (e) {
           return sendSyncError(res, e);
@@ -349,6 +383,8 @@ export class ProjectsRoutes {
             config,
             project,
             req.params.snapshotId,
+            undefined,
+            RequestAbortSignal(req.raw, res.raw),
           );
           SyncStatusCacheInvalidate(project.id);
           SyncNotificationsNotify(
@@ -382,7 +418,13 @@ export class ProjectsRoutes {
           return;
         }
         try {
-          const preview = await ResticSyncPreviewPull(span, config, project);
+          const preview = await ResticSyncPreviewPull(
+            span,
+            config,
+            project,
+            undefined,
+            RequestAbortSignal(req.raw, res.raw),
+          );
           return res.status(200).send({ preview });
         } catch (e) {
           return sendSyncError(res, e);
@@ -412,6 +454,8 @@ export class ProjectsRoutes {
             span,
             config,
             project,
+            undefined,
+            RequestAbortSignal(req.raw, res.raw),
           );
           return res.status(200).send({ preview });
         } catch (e) {
@@ -443,6 +487,8 @@ export class ProjectsRoutes {
             config,
             project,
             req.params.snapshotId,
+            undefined,
+            RequestAbortSignal(req.raw, res.raw),
           );
           return res.status(200).send({ preview });
         } catch (e) {
@@ -467,7 +513,13 @@ export class ProjectsRoutes {
         return;
       }
       try {
-        const result = await ResticSyncDiscardLocalChanges(span, config, project);
+        const result = await ResticSyncDiscardLocalChanges(
+          span,
+          config,
+          project,
+          undefined,
+          RequestAbortSignal(req.raw, res.raw),
+        );
         SyncStatusCacheInvalidate(project.id);
         SyncNotificationsNotify(
           "discard",

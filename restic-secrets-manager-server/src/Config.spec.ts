@@ -31,4 +31,25 @@ describe("Config", () => {
     expect(config.AUTH_RATE_LIMIT_REFRESH_MAX).toBe(60);
     expect(config.AUTH_RATE_LIMIT_WINDOW_SECONDS).toBe(60);
   });
+
+  it("should default every restic operation timeout", () => {
+    const config = new Config();
+    expect(config.RESTIC_TIMEOUT_SNAPSHOTS_MS).toBe(30_000);
+    expect(config.RESTIC_TIMEOUT_RESTORE_MS).toBe(300_000);
+    expect(config.RESTIC_TIMEOUT_BACKUP_MS).toBe(600_000);
+    expect(config.RESTIC_TIMEOUT_INIT_MS).toBe(60_000);
+    expect(config.RESTIC_TIMEOUT_CONNECTION_TEST_MS).toBe(30_000);
+    expect(config.RESTIC_KILL_GRACE_MS).toBe(5_000);
+  });
+
+  it("should allow overriding a restic timeout through the environment", async () => {
+    process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS = "1234";
+    try {
+      const config = new Config();
+      await config.reload();
+      expect(config.RESTIC_TIMEOUT_SNAPSHOTS_MS).toBe(1234);
+    } finally {
+      delete process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS;
+    }
+  });
 });

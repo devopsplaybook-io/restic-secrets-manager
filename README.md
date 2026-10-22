@@ -9,8 +9,9 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 - **Projects** — each project holds the settings of a target restic repository (S3 endpoint, bucket, prefix, region, bucket lookup, credentials and repository password). Projects can be created and deleted, never updated. The creation dialog offers a read-only **connection test** of the settings (empty repository, snapshots found, or a clear error) and a **review step** before creating, since settings are immutable afterwards.
 - **Secrets** — each secret is a named set of key/value pairs, edited through a dedicated dialog with masked values and reveal toggles. Secret names map to JSON file names in the repository. Values can be edited multiline (certificates, private keys, JSON), copied to the clipboard (auto-cleared after 30 seconds), whole secrets can be copied as .env or JSON, and .env/JSON content can be pasted to import key/value pairs when creating a secret. Unsaved edits are protected by a confirmation before leaving, and survive a session expiry.
 - **Secret organization** — secrets can be duplicated or renamed, a key/value entry can be copied from one secret to another, and the secret list can be filtered by secret name or key name.
-- **Pull** — restores the latest snapshot of the project repository and replaces the project secrets in the application, after a preview of the changes it would apply.
-- **Push** — serializes the project secrets and creates a new snapshot tagged with the pushing user. Push is **rejected** when the repository contains a more recent snapshot than the last synchronized one (pull first).
+- **Pull** — restores the snapshot chosen by the preview of the changes it would apply, and replaces the project secrets in the application. The preview pins the snapshot id: when the repository gains a newer snapshot before the confirmation, the pull is rejected with HTTP 409 and the preview must be run again.
+- **Push** — serializes the project secrets and creates a new snapshot tagged with the pushing user. Push is **rejected** when the repository contains a more recent snapshot than the last synchronized one (pull first). The snapshot recorded as the project's sync state is always the one created by this push, even when another writer pushed concurrently.
+- **Sync reliability** — every restic invocation (snapshots, restore, backup, init, connection test) is bounded by a configurable timeout, with a SIGTERM→SIGKILL escalation and HTTP 504 on expiry; disconnecting the client aborts its operation. Synchronizations are serialized per project — in-process queue plus a PostgreSQL advisory lock across replicas (SQLite deployments stay single-replica).
 - **Local changes detection** — projects whose secrets were modified since the last synchronization are flagged on the home page, and the UI checks each project for remote changes to pull.
 - **Change previews** — every operation that replaces secrets (pull, snapshot restore, discard of local changes) shows first which secrets and keys would be added, changed or removed — values stay masked, only value lengths are exposed — and runs only after confirmation.
 - **Snapshot history** — the home page shows the timeline of the repository snapshots with the pushing user of each snapshot; any snapshot can be restored as the project secrets (with a preview before confirmation), and local changes that were not pushed can be discarded by restoring the last synchronized snapshot (also previewed).
@@ -89,9 +90,17 @@ curl -fsS -H "Authorization: Bearer $RSM_TOKEN" \
 # List the secrets of the project (JSON, values included)
 curl -fsS -H "Authorization: Bearer $RSM_TOKEN" "$RSM_URL/api/projects/$PROJECT_ID/secrets"
 
-# Trigger a pull or a push from CI (push answers 409 when the repository holds a more recent snapshot)
-curl -fsS -X POST -H "Authorization: Bearer $RSM_TOKEN" "$RSM_URL/api/projects/$PROJECT_ID/pull"
+# Trigger a pull from CI: the preview returns snapshotId, the pull requires it
+SNAPSHOT_ID=$(curl -fsS -H "Authorization: Bearer $RSM_TOKEN" \
+  "$RSM_URL/api/projects/$PROJECT_ID/preview/pull" | jq -r .preview.snapshotId)
+curl -fsS -X POST -H "Authorization: Bearer $RSM_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"snapshotId\": \"$SNAPSHOT_ID\"}" "$RSM_URL/api/projects/$PROJECT_ID/pull"
+
+# Trigger a push from CI (answers 409 when the repository holds a more recent snapshot)
+curl -fsS -X POST -H "Authorization: Bearer $RSM_TOKEN" "$RSM_URL/api/projects/$PROJECT_ID/push"
 ```
+
+A pull answers `409` when the repository latest changed after the preview: run the preview again and send the new snapshot id. A restic operation that exceeds its timeout answers `504`.
 
 ## Sync notifications
 
@@ -121,6 +130,12 @@ Configuration is provided by environment variables (a `config.json` file next to
 | `DATABASE_POSTGRES_DATABASE`           |                          | PostgreSQL database                                 |
 | `LOG_LEVEL`                            | `info`                   | Log level                                           |
 | `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders (use a private/tmpfs mount when possible) |
+| `RESTIC_TIMEOUT_SNAPSHOTS_MS`          | `30000`                  | Timeout of `restic snapshots` operations and sync status checks |
+| `RESTIC_TIMEOUT_RESTORE_MS`            | `300000`                 | Timeout of `restic restore` operations (pull and previews) |
+| `RESTIC_TIMEOUT_BACKUP_MS`             | `600000`                 | Timeout of `restic backup` operations (push)        |
+| `RESTIC_TIMEOUT_INIT_MS`               | `60000`                  | Timeout of repository initialization                |
+| `RESTIC_TIMEOUT_CONNECTION_TEST_MS`    | `30000`                  | Timeout of the project connection test              |
+| `RESTIC_KILL_GRACE_MS`                 | `5000`                   | Grace period between SIGTERM and SIGKILL when a restic operation is timed out or aborted |
 | `NOTIFICATIONS_API_ENDPOINT`           |                          | Notifications server endpoint (empty = disabled)    |
 | `NOTIFICATIONS_API_TOKEN`              |                          | Notifications server API token                      |
 | `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`  |                          | OTLP HTTP endpoint for traces                       |

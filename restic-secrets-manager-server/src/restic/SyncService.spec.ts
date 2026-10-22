@@ -70,12 +70,13 @@ function mockClient(
     restore: jest.fn().mockImplementation(async (_id: string, target: string) => {
       await fse.writeJson(path.join(target, "api.json"), { K1: "v1" });
     }),
-    restoreLatest: jest.fn().mockImplementation(async (target: string) => {
-      await fse.writeJson(path.join(target, "api.json"), { K1: "v1" });
-    }),
+    snapshot: jest.fn().mockImplementation(async (id: string) => ({
+      id,
+      time: "2026-02-01T10:00:00Z",
+    })),
     repoInitialized: jest.fn().mockResolvedValue(true),
     init: jest.fn().mockResolvedValue(undefined),
-    backup: jest.fn().mockResolvedValue(undefined),
+    backup: jest.fn().mockResolvedValue("snapshot-2"),
     ...overrides,
   };
   ResticClientMock.mockImplementation(() => instance);
@@ -258,7 +259,7 @@ describe("importPulledSecrets", () => {
 });
 
 describe("ResticSyncPull", () => {
-  it("should record the synchronized snapshot and the content hash", async () => {
+  it("should record the pinned snapshot and the content hash", async () => {
     const snapshots: ResticSnapshot[] = [
       { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
     ];
@@ -272,9 +273,18 @@ describe("ResticSyncPull", () => {
       ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
     };
 
-    const result = await ResticSyncPull(span(), testConfig(), makeProject(), dataApi);
+    const result = await ResticSyncPull(
+      span(),
+      testConfig(),
+      makeProject(),
+      "snapshot-1",
+      dataApi,
+    );
 
-    expect(client.restoreLatest).toHaveBeenCalled();
+    expect(client.restore).toHaveBeenCalledWith(
+      "snapshot-1",
+      expect.stringContaining("restore"),
+    );
     expect(result.snapshotId).toBe("snapshot-1");
     expect(result.secrets).toBe(1);
     expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
@@ -286,19 +296,50 @@ describe("ResticSyncPull", () => {
     );
   });
 
-  it("should restrict restored files to 0600 before reading them", async () => {
+  it("should list the snapshots only once per pull", async () => {
+    const snapshots = jest
+      .fn()
+      .mockResolvedValue([{ id: "snapshot-1", time: "2026-01-01T10:00:00Z" }]);
+    mockClient({ snapshots });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await ResticSyncPull(
+      span(),
+      testConfig(),
+      makeProject(),
+      "snapshot-1",
+      dataApi,
+    );
+
+    expect(snapshots).toHaveBeenCalledTimes(1);
+  });
+
+  it("should reject a pull without a snapshot id with 400", async () => {
+    const client = mockClient();
+    try {
+      await ResticSyncPull(span(), testConfig(), makeProject(), "", {
+        ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResticSyncError);
+      expect((e as ResticSyncError).statusCode).toBe(400);
+    }
+    expect(client.restore).not.toHaveBeenCalled();
+  });
+
+  it("should reject a pull when the repository moved past the pinned snapshot", async () => {
+    // The preview pinned snapshot-1, but another writer pushed snapshot-2
     mockClient({
-      snapshots: jest
-        .fn()
-        .mockResolvedValue([
-          { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
-        ]),
-      restoreLatest: jest.fn().mockImplementation(async (target: string) => {
-        const file = path.join(target, "api.json");
-        await fse.writeJson(file, { K1: "v1" });
-        await fse.chmod(file, 0o644);
-        await fse.chmod(target, 0o755);
-      }),
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+        { id: "snapshot-2", time: "2026-02-01T10:00:00Z" },
+      ]),
     });
     const dataApi = {
       ProjectsDataGet: jest.fn().mockResolvedValue(null),
@@ -307,7 +348,54 @@ describe("ResticSyncPull", () => {
       ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
     };
 
-    await ResticSyncPull(span(), testConfig(), makeProject(), dataApi);
+    try {
+      await ResticSyncPull(
+        span(),
+        testConfig(),
+        makeProject(),
+        "snapshot-1",
+        dataApi,
+      );
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResticSyncError);
+      expect((e as ResticSyncError).statusCode).toBe(409);
+      expect((e as Error).message).toContain("snapshot-2");
+    }
+    expect(dataApi.SecretsDataReplaceForProject).not.toHaveBeenCalled();
+    expect(dataApi.ProjectsDataUpdateSyncState).not.toHaveBeenCalled();
+  });
+
+  it("should restrict restored files to 0600 before reading them", async () => {
+    mockClient({
+      snapshots: jest
+        .fn()
+        .mockResolvedValue([
+          { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+        ]),
+      restore: jest
+        .fn()
+        .mockImplementation(async (_id: string, target: string) => {
+          const file = path.join(target, "api.json");
+          await fse.writeJson(file, { K1: "v1" });
+          await fse.chmod(file, 0o644);
+          await fse.chmod(target, 0o755);
+        }),
+    });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await ResticSyncPull(
+      span(),
+      testConfig(),
+      makeProject(),
+      "snapshot-1",
+      dataApi,
+    );
 
     expect(tempWorkDir.createTemporaryWorkDir).toHaveBeenCalledWith(
       os.tmpdir(),
@@ -320,7 +408,7 @@ describe("ResticSyncPull", () => {
   it("should fail when the repository is empty", async () => {
     mockClient();
     await expect(
-      ResticSyncPull(span(), testConfig(), makeProject(), {
+      ResticSyncPull(span(), testConfig(), makeProject(), "snapshot-1", {
         ProjectsDataGet: jest.fn().mockResolvedValue(null),
       }),
     ).rejects.toMatchObject({ statusCode: 404 });
@@ -332,15 +420,13 @@ describe("ResticSyncPush", () => {
     const before: ResticSnapshot[] = [
       { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
     ];
-    const after: ResticSnapshot[] = [
-      { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
-      { id: "snapshot-2", time: "2026-02-01T10:00:00Z" },
-    ];
     const client = mockClient({
-      snapshots: jest
-        .fn()
-        .mockResolvedValueOnce(before)
-        .mockResolvedValueOnce(after),
+      snapshots: jest.fn().mockResolvedValue(before),
+      backup: jest.fn().mockResolvedValue("snapshot-2"),
+      snapshot: jest.fn().mockResolvedValue({
+        id: "snapshot-2",
+        time: "2026-02-01T10:00:00Z",
+      }),
     });
 
     const secrets = [makeSecret("api", { K1: "v1" })];
@@ -360,6 +446,7 @@ describe("ResticSyncPush", () => {
     );
 
     expect(client.backup).toHaveBeenCalled();
+    expect(client.snapshot).toHaveBeenCalledWith("snapshot-2");
     expect(result.snapshotId).toBe("snapshot-2");
     expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
       expect.anything(),
@@ -368,6 +455,106 @@ describe("ResticSyncPush", () => {
       "2026-02-01T10:00:00Z",
       computeSecretsHash(secrets),
     );
+  });
+
+  it("should record the snapshot reported by the backup, not a concurrent latest", async () => {
+    // Another writer pushes snapshot-3 while our backup creates snapshot-2
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+      backup: jest.fn().mockResolvedValue("snapshot-2"),
+      snapshot: jest.fn().mockResolvedValue({
+        id: "snapshot-2",
+        time: "2026-02-01T10:00:00Z",
+      }),
+    });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await ResticSyncPush(
+      span(),
+      testConfig(),
+      makeProject(),
+      "alice",
+      dataApi,
+    );
+
+    expect(result.snapshotId).toBe("snapshot-2");
+    expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      "snapshot-2",
+      "2026-02-01T10:00:00Z",
+      expect.any(String),
+    );
+  });
+
+  it("should fall back to the single new snapshot when the summary id is missing", async () => {
+    const s1: ResticSnapshot = {
+      id: "snapshot-1",
+      time: "2026-01-01T10:00:00Z",
+    };
+    const s2: ResticSnapshot = {
+      id: "snapshot-2",
+      time: "2026-02-01T10:00:00Z",
+    };
+    const client = mockClient({
+      snapshots: jest
+        .fn()
+        .mockResolvedValueOnce([s1])
+        .mockResolvedValueOnce([s1, s2]),
+      backup: jest.fn().mockResolvedValue(null),
+    });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await ResticSyncPush(
+      span(),
+      testConfig(),
+      makeProject(),
+      undefined,
+      dataApi,
+    );
+
+    expect(client.snapshot).not.toHaveBeenCalled();
+    expect(result.snapshotId).toBe("snapshot-2");
+  });
+
+  it("should fail without recording state when the created snapshot cannot be identified", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+      backup: jest.fn().mockResolvedValue(null),
+    });
+    const dataApi = {
+      ProjectsDataGet: jest.fn().mockResolvedValue(null),
+      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
+      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
+    };
+
+    try {
+      await ResticSyncPush(
+        span(),
+        testConfig(),
+        makeProject(),
+        undefined,
+        dataApi,
+      );
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResticSyncError);
+      expect((e as ResticSyncError).statusCode).toBe(500);
+      expect((e as Error).message).toContain("could not be identified");
+    }
+    expect(dataApi.ProjectsDataUpdateSyncState).not.toHaveBeenCalled();
   });
 
   it("should forward the pushing user to the restic backup", async () => {
@@ -407,15 +594,20 @@ describe("ResticSyncPush", () => {
       id: "snapshot-3",
       time: "2026-03-01T10:00:00Z",
     };
-    // Push A lists [s1] then [s1, s2]; push B (running after A under the
-    // lock) lists [s1, s2] then [s1, s2, s3].
+    // Push A (running first under the lock) lists [s1] and creates s2;
+    // push B lists [s1, s2] and creates s3.
     mockClient({
       snapshots: jest
         .fn()
         .mockResolvedValueOnce([s1])
-        .mockResolvedValueOnce([s1, s2])
-        .mockResolvedValueOnce([s1, s2])
-        .mockResolvedValueOnce([s1, s2, s3]),
+        .mockResolvedValueOnce([s1, s2]),
+      backup: jest
+        .fn()
+        .mockResolvedValueOnce("snapshot-2")
+        .mockResolvedValueOnce("snapshot-3"),
+      snapshot: jest.fn().mockImplementation(async (id: string) => {
+        return id === "snapshot-2" ? s2 : s3;
+      }),
     });
 
     const dbProject = makeProject();
@@ -504,7 +696,7 @@ describe("ResticSyncStatus", () => {
       makeSecret("api", { K1: "v1" }),
     ]);
     project.currentContentHash = project.lastSyncContentHash;
-    const status = await ResticSyncStatus(span(), project, dataApi);
+    const status = await ResticSyncStatus(span(), testConfig(), project, dataApi);
 
     expect(status.needsPull).toBe(true);
     expect(status.remoteLatestSnapshotId).toBe("snapshot-2");
@@ -526,7 +718,7 @@ describe("ResticSyncStatus", () => {
       makeSecret("api", { K1: "v1" }),
     ]);
     project.currentContentHash = project.lastSyncContentHash;
-    const status = await ResticSyncStatus(span(), project, dataApi);
+    const status = await ResticSyncStatus(span(), testConfig(), project, dataApi);
 
     expect(status.needsPull).toBe(false);
     expect(status.hasLocalChanges).toBe(false);
@@ -549,7 +741,7 @@ describe("ResticSyncStatus", () => {
     project.currentContentHash = computeSecretsHash([
       makeSecret("api", { K1: "v2" }),
     ]);
-    const status = await ResticSyncStatus(span(), project, dataApi);
+    const status = await ResticSyncStatus(span(), testConfig(), project, dataApi);
 
     expect(status.needsPull).toBe(false);
     expect(status.hasLocalChanges).toBe(true);
@@ -560,7 +752,7 @@ describe("ResticSyncStatus", () => {
     const dataApi = {
       SecretsDataCountForProject: jest.fn().mockResolvedValue(0),
     };
-    const status = await ResticSyncStatus(span(), makeProject(), dataApi);
+    const status = await ResticSyncStatus(span(), testConfig(), makeProject(), dataApi);
     expect(status.needsPull).toBe(false);
     expect(status.remoteLatestSnapshotId).toBe("");
   });
@@ -571,7 +763,7 @@ describe("ResticSyncTestConnection", () => {
     mockClient({
       testConnection: jest.fn().mockResolvedValue({ status: "empty" }),
     });
-    expect(await ResticSyncTestConnection(makeProject())).toEqual({
+    expect(await ResticSyncTestConnection(makeProject(), testConfig())).toEqual({
       status: "empty",
       message: "Repository is empty: it will be initialized on the first push",
     });
@@ -585,7 +777,7 @@ describe("ResticSyncTestConnection", () => {
         latestSnapshotTime: "2026-02-01T10:00:00Z",
       }),
     });
-    expect(await ResticSyncTestConnection(makeProject())).toEqual({
+    expect(await ResticSyncTestConnection(makeProject(), testConfig())).toEqual({
       status: "ok",
       message: "Connection successful: 3 snapshots found",
       snapshotCount: 3,
@@ -601,7 +793,7 @@ describe("ResticSyncTestConnection", () => {
         latestSnapshotTime: "2026-01-01T10:00:00Z",
       }),
     });
-    const result = await ResticSyncTestConnection(makeProject());
+    const result = await ResticSyncTestConnection(makeProject(), testConfig());
     expect(result.message).toBe("Connection successful: 1 snapshot found");
   });
 
@@ -612,7 +804,7 @@ describe("ResticSyncTestConnection", () => {
         message: "unable to access bucket: access denied",
       }),
     });
-    expect(await ResticSyncTestConnection(makeProject())).toEqual({
+    expect(await ResticSyncTestConnection(makeProject(), testConfig())).toEqual({
       status: "error",
       message: "unable to access bucket: access denied",
     });
@@ -622,7 +814,7 @@ describe("ResticSyncTestConnection", () => {
     mockClient({
       testConnection: jest.fn().mockResolvedValue({ status: "error" }),
     });
-    const result = await ResticSyncTestConnection(makeProject());
+    const result = await ResticSyncTestConnection(makeProject(), testConfig());
     expect(result.status).toBe("error");
     expect(result.message).toBe("Unable to reach the repository");
   });
@@ -758,7 +950,7 @@ describe("ResticSyncListSnapshots", () => {
       ]),
     });
 
-    const snapshots = await ResticSyncListSnapshots(makeProject());
+    const snapshots = await ResticSyncListSnapshots(makeProject(), testConfig());
 
     expect(snapshots.map((s) => s.id)).toEqual([
       "snapshot-3",

@@ -5,6 +5,9 @@ metadata:
   labels:
     app: restic-secrets-manager
 spec:
+  # The default SQLite setup is a single file: keep one replica. Scaling
+  # beyond one replica requires DATABASE_TYPE=postgres so the per-project
+  # synchronization order is enforced with PostgreSQL advisory locks.
   replicas: 1
   revisionHistoryLimit: 1
   selector:

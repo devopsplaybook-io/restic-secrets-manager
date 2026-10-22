@@ -29,15 +29,18 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] The repository is initialized automatically on first push if needed
 - [x] Before pushing, the application checks whether the repository contains a more recent snapshot than the last one synchronized by this project
 - [x] Push is rejected with a conflict error when a more recent snapshot exists (the user must pull first)
-- [x] After a successful push, the project records the new snapshot id and time
+- [x] After a successful push, the project records the snapshot created by its own backup — the `snapshot_id` of the `restic backup --json` summary and its exact metadata time — never the repository latest (which may belong to another writer); a backup whose created snapshot cannot be identified fails without updating the sync state
 - [x] The pushed snapshot is tagged with the pushing user (restic tag `pushed-by:<user>`)
 
 ## Pull (restore from restic repository)
 
-- [x] Pull restores the latest snapshot and replaces the project secrets with its content
-- [x] After a successful pull, the project records the snapshot id and time
+- [x] Pull restores exactly the snapshot pinned by its preview (not "latest", resolved again) and replaces the project secrets with its content
+- [x] A pull requires the previewed snapshot id: missing or empty ids are rejected with HTTP 400
+- [x] When the repository gained a newer snapshot after the preview, the pull is rejected with HTTP 409 asking to preview again, and no secret is replaced
+- [x] After a successful pull, the project records the pinned snapshot id and the time from the same snapshot listing
 - [x] Pull fails with a clear error when the repository is empty
 - [x] A pull can be previewed before it is confirmed: the server computes the diff between the current project secrets and the latest snapshot content (secrets and keys added, changed or removed); no secret value is ever sent to the client, only statuses and value lengths
+- [x] The pull preview lists the repository snapshots exactly once and returns the `snapshotId`/`snapshotTime` it diffed, which the execution must send back as the pin
 
 ## Local changes detection
 
@@ -58,11 +61,15 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
 - [x] Snapshot history entries carry the pusher attribution: the `pushed-by:` restic tag when present, falling back to the user and host reported by restic; older snapshots carry no attribution
 - [x] Restic synchronization failures surface richer error context: the last 10 output lines, capped at 1000 characters (credentials never appear, they are passed via environment variables)
+- [x] Every restic invocation (snapshots, restore, backup, init, connection test) is bounded by a configurable timeout (`RESTIC_TIMEOUT_*`, defaults 30 s / 5 min / 10 min / 60 s / 30 s); on expiry the process receives SIGTERM then SIGKILL after `RESTIC_KILL_GRACE_MS`, the API answers HTTP 504 and the project lock and status-cache slot are released
+- [x] A client disconnect aborts the restic process of its operation (SIGTERM/SIGKILL) so no orphan process survives; shared status checks are bounded by the snapshots timeout instead
+- [x] Synchronization operations (pull, push, restore, discard and previews) are serialized per project across replicas with a PostgreSQL advisory lock in addition to the in-process queue; SQLite deployments remain single-replica
 - [x] Temporary restic working directories are created with mode `0700` and the secret files inside with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup (a private tmpfs `TMP_DIR` is recommended so plaintext never reaches persistent disk)
 
 ## Programmatic access
 
 - [x] A secret can be exported by name through a read-only API endpoint returning a .env file (default) or JSON (`?format=json`); project access is required
+- [x] A programmatic pull first calls `GET /api/projects/:id/preview/pull` and then posts the returned `snapshotId` to `POST /api/projects/:id/pull`; a repository change in between answers 409 with a "preview again" message
 - [x] Sync events (push, pull, snapshot restore, discard of local changes, push conflict) emit a notification through the ecosystem notifications server when the integration is configured (`NOTIFICATIONS_API_ENDPOINT` / `NOTIFICATIONS_API_TOKEN`, disabled by default)
 - [x] Notification failures never fail the synchronization and notification payloads never contain secret values
 

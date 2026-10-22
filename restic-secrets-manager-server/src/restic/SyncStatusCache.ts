@@ -1,4 +1,5 @@
 import type { Span } from "@opentelemetry/sdk-trace";
+import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { ResticSyncStatus, SyncStatusResult } from "./SyncService";
 
@@ -42,16 +43,20 @@ function releaseSlot(): void {
 /**
  * Synchronization status of a project, cached for a short TTL (restic is
  * spawned for each check). Concurrent requests for the same project share
- * one run; failures are never cached. Sync operations must invalidate the
- * entry through {@link SyncStatusCacheInvalidate}.
+ * one run; failures are never cached. Every run releases its concurrency
+ * slot in a `finally`, so a failed or timed-out check never blocks the
+ * status of other projects. Sync operations must invalidate the entry
+ * through {@link SyncStatusCacheInvalidate}.
  */
 export async function SyncStatusCacheGet(
   context: Span,
   project: Project,
+  config: Config,
   statusRunner: (
     context: Span,
     project: Project,
-  ) => Promise<SyncStatusResult> = ResticSyncStatus,
+  ) => Promise<SyncStatusResult> = (contextIn, projectIn) =>
+    ResticSyncStatus(contextIn, config, projectIn),
 ): Promise<SyncStatusResult> {
   const cached = cache.get(project.id);
   if (cached && cached.expiresAt > Date.now()) {

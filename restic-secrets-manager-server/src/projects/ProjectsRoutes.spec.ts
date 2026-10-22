@@ -380,25 +380,54 @@ describe("synchronization endpoints", () => {
     dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
   });
 
-  it("should pull and invalidate the status cache", async () => {
+  it("should pull the pinned snapshot and invalidate the status cache", async () => {
     syncPullMock.mockResolvedValue({
       snapshotId: "abc12345",
       snapshotTime: "2026-01-01T00:00:00Z",
       secrets: 2,
       keys: 3,
     });
-    const res = await fastify.inject({ method: "POST", url: "/p1/pull" });
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/p1/pull",
+      payload: { snapshotId: "abc12345" },
+    });
     expect(res.statusCode).toBe(200);
     expect(res.json().snapshotId).toBe("abc12345");
+    expect(syncPullMock.mock.calls[0][3]).toBe("abc12345");
     expect(cacheInvalidateMock).toHaveBeenCalledWith("p1");
+  });
+
+  it("should reject a pull without the previewed snapshot id", async () => {
+    const res = await fastify.inject({ method: "POST", url: "/p1/pull" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain("snapshotId is required");
+    expect(syncPullMock).not.toHaveBeenCalled();
   });
 
   it("should map a pull conflict to 409 without invalidating the cache", async () => {
     syncPullMock.mockRejectedValue(new ResticSyncError("No snapshot", 409));
-    const res = await fastify.inject({ method: "POST", url: "/p1/pull" });
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/p1/pull",
+      payload: { snapshotId: "abc12345" },
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({ error: "No snapshot" });
     expect(cacheInvalidateMock).not.toHaveBeenCalled();
+  });
+
+  it("should map a restic timeout to 504", async () => {
+    syncPullMock.mockRejectedValue(
+      new ResticSyncError("The restic restore timed out", 504),
+    );
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/p1/pull",
+      payload: { snapshotId: "abc12345" },
+    });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toEqual({ error: "The restic restore timed out" });
   });
 
   it("should map a push conflict to 409", async () => {
@@ -480,7 +509,11 @@ describe("sync notifications", () => {
       secrets: 2,
       keys: 3,
     });
-    await fastify.inject({ method: "POST", url: "/p1/pull" });
+    await fastify.inject({
+      method: "POST",
+      url: "/p1/pull",
+      payload: { snapshotId: "abc12345" },
+    });
     expect(notifyMock).toHaveBeenCalledWith("pull", project, "admin", "abc12345");
   });
 
@@ -533,7 +566,11 @@ describe("sync notifications", () => {
     syncPushMock.mockRejectedValue(new Error("restic exploded"));
     await fastify.inject({ method: "POST", url: "/p1/push" });
     syncPullMock.mockRejectedValue(new ResticSyncError("No snapshot", 409));
-    await fastify.inject({ method: "POST", url: "/p1/pull" });
+    await fastify.inject({
+      method: "POST",
+      url: "/p1/pull",
+      payload: { snapshotId: "snapshot-1" },
+    });
     expect(notifyMock).not.toHaveBeenCalled();
   });
 });

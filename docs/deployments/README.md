@@ -43,10 +43,20 @@ client-supplied `X-Forwarded-For` headers.
 
 ## Deployment notes
 
-- **Single replica**: pull/push operations are serialized per project by an
-  in-process lock, and the sync status cache is per-instance. Run a single
-  replica per database (as the provided manifests do); scaling out would
-  need a shared locking mechanism first.
+- **Replicas and locking**: pull/push/restore/discard and previews are
+  serialized per project by an in-process queue plus, with
+  `DATABASE_TYPE=postgres`, a PostgreSQL advisory lock held on a dedicated
+  pool connection during the restic work. Multiple replicas can therefore
+  share one PostgreSQL database and the same restic repositories. With the
+  default SQLite setup the database is a single file: run exactly one
+  replica. The sync status cache stays per-instance either way.
+- **Restic timeouts**: every restic invocation is bounded
+  (`RESTIC_TIMEOUT_SNAPSHOTS_MS` 30 s, `RESTIC_TIMEOUT_RESTORE_MS` 5 min,
+  `RESTIC_TIMEOUT_BACKUP_MS` 10 min, `RESTIC_TIMEOUT_INIT_MS` 60 s,
+  `RESTIC_TIMEOUT_CONNECTION_TEST_MS` 30 s). On expiry the process receives
+  SIGTERM, then SIGKILL after `RESTIC_KILL_GRACE_MS` (default 5 s); the API
+  answers `504` and the project lock is released. A client disconnect
+  aborts its operation (answer `499` when the response can still be sent).
 - **Temp files**: restic works in a temporary directory on the container
   filesystem (`TMP_DIR`, default `/tmp`). Working directories are created
   with mode `0700` and the secret files inside with mode `0600`; stale
@@ -56,9 +66,9 @@ client-supplied `X-Forwarded-For` headers.
   plaintext never reaches persistent disk. Point `TMP_DIR` at a sized
   volume when the temp space must be bounded or shared independently.
 - **Resource limits**: restic work is bounded — sync operations are
-  serialized per project and the status cache caps concurrent restic
-  checks — so the recommended 500m CPU / 500Mi memory limits
-  accommodate typical usage.
+  serialized per project, every invocation has a timeout, and the status
+  cache caps concurrent restic checks — so the recommended 500m CPU /
+  500Mi memory limits accommodate typical usage.
 - **Security context**: the provided manifests do not set a
   `securityContext`. On hardened clusters, run the container as non-root
   with dropped capabilities (for example `runAsNonRoot: true` and

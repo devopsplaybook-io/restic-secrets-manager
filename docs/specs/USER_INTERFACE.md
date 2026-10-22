@@ -25,6 +25,7 @@
 - [x] Destructive actions (delete project, delete user, delete secret, revoke API token) ask for confirmation
 - [x] A newly created API token is displayed exactly once, with a copy action (no auto-clear) and a warning that it will not be shown again
 - [x] Push conflicts (more recent snapshot in the repository) surface a clear error message
+- [x] Restic timeout errors (HTTP `504`) and other synchronization errors are shown inline and never log the user out
 - [x] All dialogs are modal native `<dialog>` elements (showModal): centered with dimmed backdrop; Esc, backdrop click and Cancel/Close buttons dismiss them
 - [x] All dialogs show a visible close (×) icon button in their header
 - [x] Dialog and card titles with long names (e.g. "Edit Secret: <name>") wrap instead of overflowing the dialog/card layout
@@ -35,6 +36,8 @@
 - [x] The "local changes not pushed" badge is a "Review changes" action: it opens a preview of the diff that discarding would restore (secrets and keys added, changed or removed, values masked), and the Discard action confirms through the same preview
 - [x] Discarding the local changes shows a preview of the changes before the last synchronized snapshot is restored, and only executes after confirmation
 - [x] The Pull action opens a preview of the changes the pull would apply (values masked) and only executes after confirmation
+- [x] The preview displays the exact snapshot that will be applied (short id and time) for pull, discard and snapshot restore; the pull confirmation sends that pinned snapshot id
+- [x] When the repository changed between the preview and the confirmation, the pull answers HTTP `409` and the preview dialog shows an inline "repository changed, preview again" error; the confirmation stays disabled until a preview with a pinned snapshot is available
 - [x] After the projects load, the UI checks each project for remote changes to pull and shows a badge when the repository holds a more recent snapshot (checking state shown while in progress, degraded to "check failed" on error)
 - [x] A History button per project card opens the snapshot history
 
