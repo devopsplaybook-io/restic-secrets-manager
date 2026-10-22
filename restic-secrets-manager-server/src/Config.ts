@@ -26,6 +26,16 @@ export class Config extends ConfigBase {
   public NOTIFICATIONS_API_ENDPOINT = "";
   public NOTIFICATIONS_API_TOKEN = "";
 
+  // Every restic invocation is bounded in time (milliseconds). The kill
+  // grace is the delay between SIGTERM and SIGKILL when a process must be
+  // stopped (timeout or client disconnect).
+  public RESTIC_TIMEOUT_SNAPSHOTS_MS = 30_000;
+  public RESTIC_TIMEOUT_RESTORE_MS = 300_000;
+  public RESTIC_TIMEOUT_BACKUP_MS = 600_000;
+  public RESTIC_TIMEOUT_INIT_MS = 60_000;
+  public RESTIC_TIMEOUT_CONNECTION_TEST_MS = 30_000;
+  public RESTIC_KILL_GRACE_MS = 5_000;
+
   constructor() {
     super("restic-secrets-manager-server");
 
@@ -45,6 +55,12 @@ export class Config extends ConfigBase {
     this.addConfigField({ field: "TRUST_PROXY" });
     this.addConfigField({ field: "NOTIFICATIONS_API_ENDPOINT" });
     this.addConfigField({ field: "NOTIFICATIONS_API_TOKEN", sensitive: true });
+    this.addConfigField({ field: "RESTIC_TIMEOUT_SNAPSHOTS_MS" });
+    this.addConfigField({ field: "RESTIC_TIMEOUT_RESTORE_MS" });
+    this.addConfigField({ field: "RESTIC_TIMEOUT_BACKUP_MS" });
+    this.addConfigField({ field: "RESTIC_TIMEOUT_INIT_MS" });
+    this.addConfigField({ field: "RESTIC_TIMEOUT_CONNECTION_TEST_MS" });
+    this.addConfigField({ field: "RESTIC_KILL_GRACE_MS" });
   }
 
   public async reload(): Promise<void> {

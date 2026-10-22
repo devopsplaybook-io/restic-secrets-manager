@@ -1,5 +1,11 @@
 import * as childProcess from "child_process";
 import { Project } from "../model/Project";
+import { ResticSyncError } from "./ResticErrors";
+import {
+  CONNECTION_TEST_TIMEOUT_MS,
+  DEFAULT_RESTIC_TIMEOUTS,
+  ResticTimeouts,
+} from "./ResticTimeouts";
 
 export interface ResticCommandResult {
   // number for an exit code, string for a spawn error code (e.g. "ENOENT")
@@ -8,11 +14,17 @@ export interface ResticCommandResult {
   stderr: string;
   /** True when the invocation was killed after its timeout. */
   timedOut?: boolean;
+  /** True when the invocation was killed because the request aborted. */
+  aborted?: boolean;
 }
 
 export interface ResticRunOptions {
   /** Kills the restic process after this many milliseconds. */
   timeoutMs?: number;
+  /** Delay between SIGTERM and SIGKILL when the process must be stopped. */
+  killGraceMs?: number;
+  /** Aborts (SIGTERM then SIGKILL) the invocation when the signal fires. */
+  signal?: AbortSignal;
 }
 
 export type ResticRunner = (
@@ -23,34 +35,115 @@ export type ResticRunner = (
   options?: ResticRunOptions,
 ) => Promise<ResticCommandResult>;
 
-/** Default runner: executes the restic binary with the provided env/cwd. */
+const MAX_OUTPUT_BYTES = 50 * 1024 * 1024;
+const DEFAULT_KILL_GRACE_MS = 5_000;
+
+/**
+ * Default runner: spawns the restic binary and bounds it in time. On timeout
+ * or abort the process receives SIGTERM and, if it has not exited after the
+ * kill grace, SIGKILL: no restic process is left behind.
+ */
 export function defaultResticRunner(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd?: string,
-  options?: ResticRunOptions,
+  options: ResticRunOptions = {},
 ): Promise<ResticCommandResult> {
   return new Promise((resolve) => {
-    childProcess.execFile(
-      command,
-      args,
-      {
-        env,
-        cwd,
-        maxBuffer: 50 * 1024 * 1024,
-        timeout: options?.timeoutMs,
-      },
-      (error, stdout, stderr) => {
-        const code = error ? (error as any).code ?? 1 : 0;
-        resolve({
-          code,
-          stdout: String(stdout),
-          stderr: String(stderr),
-          timedOut: Boolean((error as any)?.killed),
-        });
-      },
-    );
+    const child = childProcess.spawn(command, args, {
+      env,
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let aborted = false;
+    let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearTimers = () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+    };
+
+    const settle = (code: number | string) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimers();
+      options.signal?.removeEventListener("abort", onAbort);
+      resolve({ code, stdout, stderr, timedOut, aborted });
+    };
+
+    const terminate = () => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
+      child.kill("SIGTERM");
+      if (!killTimer) {
+        killTimer = setTimeout(
+          () => {
+            if (child.exitCode === null && child.signalCode === null) {
+              child.kill("SIGKILL");
+            }
+          },
+          options.killGraceMs ?? DEFAULT_KILL_GRACE_MS,
+        );
+        killTimer.unref?.();
+      }
+    };
+
+    const onAbort = () => {
+      aborted = true;
+      terminate();
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
+    const timeoutTimer =
+      options.timeoutMs && options.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            terminate();
+          }, options.timeoutMs)
+        : undefined;
+    timeoutTimer?.unref?.();
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes <= MAX_OUTPUT_BYTES) {
+        stdout += chunk.toString();
+      }
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= MAX_OUTPUT_BYTES) {
+        stderr += chunk.toString();
+      }
+    });
+
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      settle(error.code ?? 1);
+    });
+    child.on("close", (code, signal) => {
+      settle(code ?? (signal ? 1 : 0));
+    });
   });
 }
 
@@ -68,8 +161,7 @@ export interface ResticConnectionTestResult {
   message?: string;
 }
 
-/** Time limit of the read-only connection test invocation. */
-export const CONNECTION_TEST_TIMEOUT_MS = 30_000;
+export { CONNECTION_TEST_TIMEOUT_MS };
 
 /**
  * Returns the most recent snapshot of the list (by snapshot time),
@@ -87,16 +179,54 @@ export function latestSnapshot(
 }
 
 /**
+ * Snapshot id reported by the summary line of `restic backup --json`, when
+ * present. Status lines are ignored.
+ */
+export function parseBackupSnapshotId(stdout: string): string | null {
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) {
+      continue;
+    }
+    let message: any;
+    try {
+      message = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (
+      message?.message_type === "summary" &&
+      typeof message.snapshot_id === "string" &&
+      message.snapshot_id.length > 0
+    ) {
+      return message.snapshot_id;
+    }
+  }
+  return null;
+}
+
+/**
  * Thin wrapper around the restic CLI for one project repository.
- * Credentials are passed via environment variables and are never logged.
+ * Every operation is bounded by its configured timeout; timeouts are mapped
+ * to a 504 and client disconnects to a 499. Credentials are passed via
+ * environment variables and are never logged.
  */
 export class ResticClient {
   private project: Project;
   private runner: ResticRunner;
+  private timeouts: ResticTimeouts;
+  private signal?: AbortSignal;
 
-  constructor(project: Project, runner: ResticRunner = defaultResticRunner) {
+  constructor(
+    project: Project,
+    runner: ResticRunner = defaultResticRunner,
+    timeouts: ResticTimeouts = DEFAULT_RESTIC_TIMEOUTS,
+    signal?: AbortSignal,
+  ) {
     this.project = project;
     this.runner = runner;
+    this.timeouts = timeouts;
+    this.signal = signal;
   }
 
   /** Environment for restic invocations (credentials never logged). */
@@ -129,18 +259,61 @@ export class ResticClient {
   }
 
   /**
+   * Runs an operation with its timeout, kill grace and abort signal, and
+   * maps timeouts (504) and client disconnects (499) to sync errors.
+   */
+  private async runOperation(
+    args: string[],
+    timeoutMs: number,
+    label: string,
+    cwd?: string,
+  ): Promise<ResticCommandResult> {
+    const result = await this.run(args, cwd, {
+      timeoutMs,
+      killGraceMs: this.timeouts.killGraceMs,
+      signal: this.signal,
+    });
+    if (result.timedOut) {
+      throw new ResticSyncError(
+        `The restic ${label} timed out after ${Math.round(timeoutMs / 1000)} seconds: the repository endpoint may be unreachable`,
+        504,
+      );
+    }
+    if (result.aborted) {
+      throw new ResticSyncError(
+        `The restic ${label} was cancelled because the client disconnected`,
+        499,
+      );
+    }
+    return result;
+  }
+
+  /**
    * Read-only check of the repository settings: runs `snapshots --json`
    * with a time limit and classifies the outcome as an empty repository,
    * a reachable repository (with its snapshot count) or a failure.
    */
   public async testConnection(): Promise<ResticConnectionTestResult> {
-    const result = await this.run([...this.baseArgs(), "snapshots", "--json"], undefined, {
-      timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
-    });
+    const timeoutMs = this.timeouts.connectionTestMs;
+    const result = await this.run(
+      [...this.baseArgs(), "snapshots", "--json"],
+      undefined,
+      {
+        timeoutMs,
+        killGraceMs: this.timeouts.killGraceMs,
+        signal: this.signal,
+      },
+    );
     if (result.timedOut) {
       return {
         status: "error",
-        message: `The connection test timed out after ${CONNECTION_TEST_TIMEOUT_MS / 1000} seconds: the endpoint may be unreachable`,
+        message: `The connection test timed out after ${timeoutMs / 1000} seconds: the endpoint may be unreachable`,
+      };
+    }
+    if (result.aborted) {
+      return {
+        status: "error",
+        message: "The connection test was cancelled because the client disconnected",
       };
     }
     if (result.code === 0) {
@@ -168,7 +341,11 @@ export class ResticClient {
 
   /** True when the repository is initialized (has a config). */
   public async repoInitialized(): Promise<boolean> {
-    const result = await this.run([...this.baseArgs(), "snapshots", "--json"]);
+    const result = await this.runOperation(
+      [...this.baseArgs(), "snapshots", "--json"],
+      this.timeouts.snapshotsMs,
+      "repository check",
+    );
     if (result.code === 0) {
       return true;
     }
@@ -181,7 +358,11 @@ export class ResticClient {
   }
 
   public async init(): Promise<void> {
-    const result = await this.run([...this.baseArgs(), "init"]);
+    const result = await this.runOperation(
+      [...this.baseArgs(), "init"],
+      this.timeouts.initMs,
+      "repository initialization",
+    );
     if (result.code !== 0 && !isRepoAlreadyInitialized(result)) {
       throw new Error(
         `Unable to initialize the restic repository: ${sanitizeResticError(result)}`,
@@ -191,7 +372,11 @@ export class ResticClient {
 
   /** List all snapshots of the repository ([] when the repo is not initialized). */
   public async snapshots(): Promise<ResticSnapshot[]> {
-    const result = await this.run([...this.baseArgs(), "snapshots", "--json"]);
+    const result = await this.runOperation(
+      [...this.baseArgs(), "snapshots", "--json"],
+      this.timeouts.snapshotsMs,
+      "snapshot listing",
+    );
     if (result.code !== 0) {
       if (isRepoNotInitialized(result)) {
         return [];
@@ -200,15 +385,32 @@ export class ResticClient {
         `Unable to list restic snapshots: ${sanitizeResticError(result)}`,
       );
     }
-    try {
-      return JSON.parse(result.stdout) as ResticSnapshot[];
-    } catch {
-      throw new Error("Unable to parse restic snapshots output");
-    }
+    return parseSnapshotsOutput(result.stdout);
   }
 
-  /** Back up the given directory (must be run with cwd set to it). */
-  public async backup(dir: string, pushedBy?: string): Promise<void> {
+  /**
+   * Look up one exact snapshot (full id) of the repository.
+   * Returns null when restic does not know the id.
+   */
+  public async snapshot(id: string): Promise<ResticSnapshot | null> {
+    const result = await this.runOperation(
+      [...this.baseArgs(), "snapshots", id, "--json"],
+      this.timeouts.snapshotsMs,
+      "snapshot lookup",
+    );
+    if (result.code !== 0) {
+      return null;
+    }
+    const snapshots = parseSnapshotsOutput(result.stdout);
+    return snapshots.find((snapshot) => snapshot.id === id) || null;
+  }
+
+  /**
+   * Back up the given directory (must be run with cwd set to it).
+   * Returns the id of the snapshot reported by `restic backup --json`
+   * (summary line), or null when the output carries no summary id.
+   */
+  public async backup(dir: string, pushedBy?: string): Promise<string | null> {
     const args = [
       ...this.baseArgs(),
       "backup",
@@ -221,36 +423,41 @@ export class ResticClient {
     if (pusherTag) {
       args.push("--tag", `pushed-by:${pusherTag}`);
     }
-    args.push(".");
-    const result = await this.run(args, dir);
+    args.push("--json", ".");
+    const result = await this.runOperation(
+      args,
+      this.timeouts.backupMs,
+      "backup",
+      dir,
+    );
     if (result.code !== 0) {
       throw new Error(
         `Unable to push secrets to the restic repository: ${sanitizeResticError(result)}`,
       );
     }
+    return parseBackupSnapshotId(result.stdout);
   }
 
-  /**
-   * Restore the given snapshot (id or "latest") into the target directory.
-   */
+  /** Restore a pinned snapshot (exact id) into the target directory. */
   public async restore(snapshotId: string, target: string): Promise<void> {
-    const result = await this.run([
-      ...this.baseArgs(),
+    const result = await this.runOperation(
+      [...this.baseArgs(), "restore", snapshotId, "--target", target],
+      this.timeouts.restoreMs,
       "restore",
-      snapshotId,
-      "--target",
-      target,
-    ]);
+    );
     if (result.code !== 0) {
       throw new Error(
         `Unable to restore secrets from the restic repository: ${sanitizeResticError(result)}`,
       );
     }
   }
+}
 
-  /** Restore the latest snapshot into the target directory. */
-  public async restoreLatest(target: string): Promise<void> {
-    return this.restore("latest", target);
+function parseSnapshotsOutput(stdout: string): ResticSnapshot[] {
+  try {
+    return JSON.parse(stdout) as ResticSnapshot[];
+  } catch {
+    throw new Error("Unable to parse restic snapshots output");
   }
 }
 

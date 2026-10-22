@@ -23,6 +23,8 @@ import {
   ResticClient,
   ResticSnapshot,
 } from "./ResticClient";
+import { ResticSyncError } from "./ResticErrors";
+import { resticTimeoutsFromConfig } from "./ResticTimeouts";
 import { SyncLocksRun } from "./SyncLocks";
 import {
   createTemporaryWorkDir,
@@ -77,26 +79,34 @@ export interface ConnectionTestResult {
   latestSnapshotTime?: string;
 }
 
-export class ResticSyncError extends Error {
-  public statusCode: number;
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+export { ResticSyncError };
 
 /**
- * Pull (restore) the latest snapshot of the project repository and replace
- * the project secrets with its content. Serialized per project.
+ * Pull (restore) the pinned snapshot of the project repository and replace
+ * the project secrets with its content. The snapshot must still be the
+ * repository latest (otherwise the repository changed since the preview and
+ * the pull is rejected with 409). Serialized per project.
  */
 export async function ResticSyncPull(
   context: Span,
   config: Config,
   project: Project,
+  snapshotId: string,
   dataApi: any = DataApi,
+  signal?: AbortSignal,
 ): Promise<PullResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncPullUnlocked(context, config, project, dataApi),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncPullUnlocked(
+        context,
+        config,
+        project,
+        snapshotId,
+        dataApi,
+        signal,
+      ),
+    context,
   );
 }
 
@@ -104,12 +114,25 @@ async function resticSyncPullUnlocked(
   context: Span,
   config: Config,
   project: Project,
+  snapshotId: string,
   dataApi: any,
+  signal?: AbortSignal,
 ): Promise<PullResult> {
+  if (typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
+    throw new ResticSyncError(
+      "snapshotId is required: preview the pull and send the previewed snapshot id",
+      400,
+    );
+  }
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
   const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
   try {
@@ -123,8 +146,15 @@ async function resticSyncPullUnlocked(
         404,
       );
     }
+    if (latest.id !== snapshotId) {
+      throw new ResticSyncError(
+        `The repository changed since the preview (latest snapshot is now ${latest.id}). Preview the pull again.`,
+        409,
+      );
+    }
 
-    await client.restoreLatest(restoreDir);
+    // Restore exactly the previewed snapshot, not "latest" resolved again.
+    await client.restore(snapshotId, restoreDir);
     await restrictTreePermissions(restoreDir);
     const { secrets, keys } = await importPulledSecrets(
       context,
@@ -225,9 +255,20 @@ export async function ResticSyncPush(
   project: Project,
   pushedBy: string | undefined,
   dataApi: any = DataApi,
+  signal?: AbortSignal,
 ): Promise<PushResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncPushUnlocked(context, config, project, pushedBy, dataApi),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncPushUnlocked(
+        context,
+        config,
+        project,
+        pushedBy,
+        dataApi,
+        signal,
+      ),
+    context,
   );
 }
 
@@ -237,11 +278,17 @@ async function resticSyncPushUnlocked(
   project: Project,
   pushedBy: string | undefined,
   dataApi: any,
+  signal?: AbortSignal,
 ): Promise<PushResult> {
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
   const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const secretsDir = path.join(workDir, "secrets");
   try {
@@ -265,36 +312,67 @@ async function resticSyncPushUnlocked(
     // Reject the push when the repository holds a snapshot we do not know
     // about (never pulled or more recent than the last synchronization)
     const snapshots = await client.snapshots();
+    const knownIds = new Set(snapshots.map((snapshot) => snapshot.id));
     const latest = latestSnapshot(snapshots);
     if (latest) {
       ensureNoNewerSnapshot(project, latest);
     }
 
-    await client.backup(secretsDir, pushedBy);
+    // Record exactly the snapshot created by this backup, never another
+    // writer's latest snapshot.
+    const createdId = await client.backup(secretsDir, pushedBy);
+    const created = await resolveCreatedSnapshot(
+      client,
+      createdId,
+      knownIds,
+    );
 
-    const snapshotsAfter = await client.snapshots();
-    const latestAfter = latestSnapshot(snapshotsAfter);
-    if (!latestAfter) {
-      throw new ResticSyncError(
-        "Push completed but no snapshot was created",
-        500,
-      );
-    }
     await dataApi.ProjectsDataUpdateSyncState(
       context,
       project.id,
-      latestAfter.id,
-      latestAfter.time,
+      created.id,
+      created.time,
       computeSecretsHash(secrets),
     );
 
     return {
-      snapshotId: latestAfter.id,
-      snapshotTime: latestAfter.time,
+      snapshotId: created.id,
+      snapshotTime: created.time,
     };
   } finally {
     await fse.remove(workDir);
   }
+}
+
+/**
+ * Identify the snapshot created by a backup: the summary id from
+ * `restic backup --json` when present, otherwise the single snapshot that
+ * appeared since the pre-push listing. Never falls back to "the latest
+ * snapshot", which may belong to another writer.
+ */
+async function resolveCreatedSnapshot(
+  client: ResticClient,
+  createdId: string | null,
+  knownIds: Set<string>,
+): Promise<ResticSnapshot> {
+  if (createdId) {
+    const created = await client.snapshot(createdId);
+    if (created) {
+      return created;
+    }
+  } else {
+    const snapshotsAfter = await client.snapshots();
+    const newSnapshots = snapshotsAfter.filter(
+      (snapshot) => !knownIds.has(snapshot.id),
+    );
+    if (newSnapshots.length === 1) {
+      return newSnapshots[0];
+    }
+  }
+  throw new ResticSyncError(
+    "The push created a snapshot but it could not be identified; pull before pushing again",
+    500,
+  );
 }
 
 /**
@@ -304,10 +382,15 @@ async function resticSyncPushUnlocked(
  */
 export async function ResticSyncStatus(
   context: Span,
+  config: Config,
   project: Project,
   dataApi: any = DataApi,
 ): Promise<SyncStatusResult> {
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+  );
   const snapshots = await client.snapshots();
   const latest = latestSnapshot(snapshots);
   const secretCount = await dataApi.SecretsDataCountForProject(
@@ -327,8 +410,15 @@ export async function ResticSyncStatus(
 /** Snapshot history of the project repository, most recent first. */
 export async function ResticSyncListSnapshots(
   project: Project,
+  config: Config,
+  signal?: AbortSignal,
 ): Promise<SnapshotInfo[]> {
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
   const snapshots = await client.snapshots();
   return snapshots
     .slice()
@@ -347,8 +437,15 @@ export async function ResticSyncListSnapshots(
  */
 export async function ResticSyncTestConnection(
   project: Project,
+  config: Config,
+  signal?: AbortSignal,
 ): Promise<ConnectionTestResult> {
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
   const result = await client.testConnection();
   if (result.status === "empty") {
     return {
@@ -411,15 +508,20 @@ export async function ResticSyncRestoreSnapshot(
   project: Project,
   snapshotId: string,
   dataApi: any = DataApi,
+  signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncRestoreSnapshotUnlocked(
-      context,
-      config,
-      project,
-      snapshotId,
-      dataApi,
-    ),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncRestoreSnapshotUnlocked(
+        context,
+        config,
+        project,
+        snapshotId,
+        dataApi,
+        signal,
+      ),
+    context,
   );
 }
 
@@ -429,11 +531,17 @@ async function resticSyncRestoreSnapshotUnlocked(
   project: Project,
   snapshotId: string,
   dataApi: any,
+  signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
   const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
   try {
@@ -480,9 +588,19 @@ export async function ResticSyncDiscardLocalChanges(
   config: Config,
   project: Project,
   dataApi: any = DataApi,
+  signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncDiscardLocalChangesUnlocked(context, config, project, dataApi),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncDiscardLocalChangesUnlocked(
+        context,
+        config,
+        project,
+        dataApi,
+        signal,
+      ),
+    context,
   );
 }
 
@@ -491,6 +609,7 @@ async function resticSyncDiscardLocalChangesUnlocked(
   config: Config,
   project: Project,
   dataApi: any,
+  signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
@@ -507,6 +626,7 @@ async function resticSyncDiscardLocalChangesUnlocked(
     project,
     project.lastSyncSnapshotId,
     dataApi,
+    signal,
   );
 }
 

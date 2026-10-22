@@ -1,4 +1,5 @@
 import type { Span } from "@opentelemetry/sdk-trace";
+import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { SyncStatusResult } from "./SyncService";
 import {
@@ -26,6 +27,8 @@ function result(): SyncStatusResult {
 
 const context = { name: "test" } as unknown as Span;
 
+const config = {} as Config;
+
 type StatusRunner = (
   context: Span,
   project: Project,
@@ -36,8 +39,8 @@ describe("SyncStatusCacheGet", () => {
     const runner = jest.fn().mockResolvedValue(result());
     const project = makeProject("cache-ttl");
 
-    await SyncStatusCacheGet(context, project, runner as StatusRunner);
-    await SyncStatusCacheGet(context, project, runner as StatusRunner);
+    await SyncStatusCacheGet(context, project, config, runner as StatusRunner);
+    await SyncStatusCacheGet(context, project, config, runner as StatusRunner);
 
     expect(runner).toHaveBeenCalledTimes(1);
   });
@@ -48,9 +51,9 @@ describe("SyncStatusCacheGet", () => {
       const runner = jest.fn().mockResolvedValue(result());
       const project = makeProject("cache-expiry");
 
-      await SyncStatusCacheGet(context, project, runner as StatusRunner);
+      await SyncStatusCacheGet(context, project, config, runner as StatusRunner);
       jest.advanceTimersByTime(30_001);
-      await SyncStatusCacheGet(context, project, runner as StatusRunner);
+      await SyncStatusCacheGet(context, project, config, runner as StatusRunner);
 
       expect(runner).toHaveBeenCalledTimes(2);
     } finally {
@@ -66,8 +69,8 @@ describe("SyncStatusCacheGet", () => {
     const project = makeProject("cache-dedupe");
 
     const [first, second] = await Promise.all([
-      SyncStatusCacheGet(context, project, runner as StatusRunner),
-      SyncStatusCacheGet(context, project, runner as StatusRunner),
+      SyncStatusCacheGet(context, project, config, runner as StatusRunner),
+      SyncStatusCacheGet(context, project, config, runner as StatusRunner),
     ]);
 
     expect(runner).toHaveBeenCalledTimes(1);
@@ -88,7 +91,7 @@ describe("SyncStatusCacheGet", () => {
 
     await Promise.all(
       projects.map((project) =>
-        SyncStatusCacheGet(context, project, runner as StatusRunner),
+        SyncStatusCacheGet(context, project, config, runner as StatusRunner),
       ),
     );
 
@@ -96,13 +99,48 @@ describe("SyncStatusCacheGet", () => {
     expect(maxActive).toBe(3);
   });
 
+  it("should release the concurrency slot of a failed status run", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const runner = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockImplementation(async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active--;
+        return result();
+      });
+
+    await expect(
+      SyncStatusCacheGet(
+        context,
+        makeProject("cache-slot-failure"),
+        config,
+        runner as StatusRunner,
+      ),
+    ).rejects.toThrow("timeout");
+
+    // A leaked slot would limit these three runs to two concurrent ones
+    const projects = [1, 2, 3].map((n) => makeProject(`cache-slot-${n}`));
+    await Promise.all(
+      projects.map((project) =>
+        SyncStatusCacheGet(context, project, config, runner as StatusRunner),
+      ),
+    );
+
+    expect(runner).toHaveBeenCalledTimes(4);
+    expect(maxActive).toBe(3);
+  });
+
   it("should re-run the status after an invalidation", async () => {
     const runner = jest.fn().mockResolvedValue(result());
     const project = makeProject("cache-invalidate");
 
-    await SyncStatusCacheGet(context, project, runner as StatusRunner);
+    await SyncStatusCacheGet(context, project, config, runner as StatusRunner);
     SyncStatusCacheInvalidate(project.id);
-    await SyncStatusCacheGet(context, project, runner as StatusRunner);
+    await SyncStatusCacheGet(context, project, config, runner as StatusRunner);
 
     expect(runner).toHaveBeenCalledTimes(2);
   });
@@ -115,10 +153,10 @@ describe("SyncStatusCacheGet", () => {
     const project = makeProject("cache-error");
 
     await expect(
-      SyncStatusCacheGet(context, project, runner as StatusRunner),
+      SyncStatusCacheGet(context, project, config, runner as StatusRunner),
     ).rejects.toThrow("boom");
     await expect(
-      SyncStatusCacheGet(context, project, runner as StatusRunner),
+      SyncStatusCacheGet(context, project, config, runner as StatusRunner),
     ).resolves.toMatchObject({ needsPull: false });
     expect(runner).toHaveBeenCalledTimes(2);
   });

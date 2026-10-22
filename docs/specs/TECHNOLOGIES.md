@@ -8,7 +8,8 @@
 - `@fastify/rate-limit` (login and session-refresh throttling, `429` + `Retry-After`)
 - `@devopsplaybook.io/otel-utils-fastify` (OpenTelemetry request hooks)
 - SQLite via `better-sqlite3` (default) with optional PostgreSQL support; schema migrations include `users.tokenVersion` for session revocation
-- `restic` CLI invoked for pull/push operations against S3-compatible repositories
+- `restic` CLI invoked for pull/push operations against S3-compatible repositories, through a `spawn` runner with per-operation timeouts, SIGTERM→SIGKILL escalation and AbortSignal support for client disconnects
+- PostgreSQL advisory locks (via the common-utils database facade) serializing synchronization operations per project across replicas; SQLite deployments stay single-replica
 - Jest + ts-jest for unit tests, ESLint (typescript-eslint) for linting
 
 ## Web

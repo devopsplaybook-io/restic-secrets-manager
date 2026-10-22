@@ -1,8 +1,13 @@
+import * as fse from "fs-extra";
+import * as os from "os";
+import * as path from "path";
 import { Project } from "../model/Project";
 import {
   CONNECTION_TEST_TIMEOUT_MS,
+  defaultResticRunner,
   isRepoNotInitialized,
   latestSnapshot,
+  parseBackupSnapshotId,
   ResticClient,
   ResticCommandResult,
   ResticRunner,
@@ -10,6 +15,8 @@ import {
   sanitizePusherTag,
   sanitizeResticError,
 } from "./ResticClient";
+import { ResticSyncError } from "./ResticErrors";
+import { DEFAULT_RESTIC_TIMEOUTS, ResticTimeouts } from "./ResticTimeouts";
 
 function makeProject(): Project {
   const project = new Project();
@@ -27,6 +34,32 @@ function makeProject(): Project {
 
 function result(overrides: Partial<ResticCommandResult>): ResticCommandResult {
   return { code: 0, stdout: "", stderr: "", ...overrides };
+}
+
+const TEST_TIMEOUTS: ResticTimeouts = {
+  snapshotsMs: 11,
+  restoreMs: 22,
+  backupMs: 33,
+  initMs: 44,
+  connectionTestMs: 55,
+  killGraceMs: 66,
+};
+
+interface CapturedCall {
+  args: string[];
+  cwd?: string;
+  options?: unknown;
+}
+
+/** Runner that records the invocation options and returns the given result. */
+function capturingRunner(
+  captured: CapturedCall[],
+  response: Partial<ResticCommandResult> = { stdout: "[]" },
+): ResticRunner {
+  return async (_command, args, _env, cwd, options) => {
+    captured.push({ args, cwd, options });
+    return result(response);
+  };
 }
 
 describe("ResticClient env", () => {
@@ -118,7 +151,7 @@ describe("ResticClient snapshots", () => {
 });
 
 describe("ResticClient backup", () => {
-  it("should back up the directory with the manager tag", async () => {
+  it("should back up the directory with the manager tag and --json", async () => {
     const captured: { args: string[]; cwd?: string }[] = [];
     const runner: ResticRunner = async (_command, args, _env, cwd) => {
       captured.push({ args, cwd });
@@ -128,14 +161,36 @@ describe("ResticClient backup", () => {
     await client.backup("/tmp/secrets");
     expect(captured.length).toBe(1);
     expect(captured[0].cwd).toBe("/tmp/secrets");
-    expect(captured[0].args.slice(-6)).toEqual([
+    expect(captured[0].args.slice(-7)).toEqual([
       "backup",
       "--group-by",
       "paths",
       "--tag",
       "restic-secrets-manager",
+      "--json",
       ".",
     ]);
+  });
+
+  it("should return the snapshot id of the json summary line", async () => {
+    const stdout = [
+      JSON.stringify({ message_type: "status", percent_done: 0.5 }),
+      JSON.stringify({
+        message_type: "summary",
+        files_new: 1,
+        snapshot_id: "abc123def456",
+      }),
+    ].join("\n");
+    const runner: ResticRunner = async () => result({ stdout });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.backup("/tmp/secrets")).toBe("abc123def456");
+  });
+
+  it("should return null when the summary line carries no snapshot id", async () => {
+    const runner: ResticRunner = async () =>
+      result({ stdout: JSON.stringify({ message_type: "summary" }) });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.backup("/tmp/secrets")).toBeNull();
   });
 
   it("should throw a safe error message on failure", async () => {
@@ -155,7 +210,7 @@ describe("ResticClient backup", () => {
     };
     const client = new ResticClient(makeProject(), runner);
     await client.backup("/tmp/secrets", "alice");
-    expect(captured[0].args.slice(-8)).toEqual([
+    expect(captured[0].args.slice(-9)).toEqual([
       "backup",
       "--group-by",
       "paths",
@@ -163,6 +218,7 @@ describe("ResticClient backup", () => {
       "restic-secrets-manager",
       "--tag",
       "pushed-by:alice",
+      "--json",
       ".",
     ]);
   });
@@ -282,22 +338,6 @@ describe("ResticClient restore", () => {
     ]);
   });
 
-  it("should delegate restoreLatest to the restore command", async () => {
-    const captured: { args: string[] }[] = [];
-    const runner: ResticRunner = async (_command, args) => {
-      captured.push({ args });
-      return result({ stdout: "restored" });
-    };
-    const client = new ResticClient(makeProject(), runner);
-    await client.restoreLatest("/tmp/restore");
-    expect(captured[0].args.slice(-4)).toEqual([
-      "restore",
-      "latest",
-      "--target",
-      "/tmp/restore",
-    ]);
-  });
-
   it("should throw a safe error message on failure", async () => {
     const runner: ResticRunner = async () =>
       result({ code: 1, stderr: "no snapshot" });
@@ -305,6 +345,216 @@ describe("ResticClient restore", () => {
     await expect(client.restore("abcd1234", "/tmp/restore")).rejects.toThrow(
       "Unable to restore secrets from the restic repository: no snapshot",
     );
+  });
+});
+
+describe("ResticClient snapshot lookup", () => {
+  it("should return the matching snapshot", async () => {
+    const snapshots: ResticSnapshot[] = [
+      { id: "aaaaaaaaaa", time: "2026-01-01T10:00:00Z" },
+    ];
+    const captured: CapturedCall[] = [];
+    const client = new ResticClient(
+      makeProject(),
+      capturingRunner(captured, { stdout: JSON.stringify(snapshots) }),
+    );
+    expect(await client.snapshot("aaaaaaaaaa")).toEqual(snapshots[0]);
+    expect(captured[0].args.slice(-3)).toEqual([
+      "snapshots",
+      "aaaaaaaaaa",
+      "--json",
+    ]);
+  });
+
+  it("should return null when restic does not know the id", async () => {
+    const runner: ResticRunner = async () =>
+      result({ code: 1, stderr: "no matching ID found" });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.snapshot("unknown")).toBeNull();
+  });
+});
+
+describe("ResticClient operation timeouts", () => {
+  function clientWith(runner: ResticRunner): ResticClient {
+    return new ResticClient(makeProject(), runner, TEST_TIMEOUTS);
+  }
+
+  it("should bound snapshots, repo check and snapshot lookup by the snapshots timeout", async () => {
+    const captured: CapturedCall[] = [];
+    const client = clientWith(
+      capturingRunner(captured, { stdout: "[]" }),
+    );
+    await client.snapshots();
+    await client.repoInitialized();
+    await client.snapshot("aaaaaaaaaa");
+
+    for (const call of captured) {
+      expect(call.options).toEqual({
+        timeoutMs: TEST_TIMEOUTS.snapshotsMs,
+        killGraceMs: TEST_TIMEOUTS.killGraceMs,
+        signal: undefined,
+      });
+    }
+  });
+
+  it("should bound init by the init timeout", async () => {
+    const captured: CapturedCall[] = [];
+    await clientWith(capturingRunner(captured, { stdout: "created" })).init();
+    expect((captured[0].options as any).timeoutMs).toBe(
+      TEST_TIMEOUTS.initMs,
+    );
+  });
+
+  it("should bound restore by the restore timeout", async () => {
+    const captured: CapturedCall[] = [];
+    await clientWith(
+      capturingRunner(captured, { stdout: "restored" }),
+    ).restore("abcd1234", "/tmp/restore");
+    expect((captured[0].options as any).timeoutMs).toBe(
+      TEST_TIMEOUTS.restoreMs,
+    );
+  });
+
+  it("should bound backup by the backup timeout", async () => {
+    const captured: CapturedCall[] = [];
+    await clientWith(capturingRunner(captured)).backup("/tmp/secrets");
+    expect((captured[0].options as any).timeoutMs).toBe(
+      TEST_TIMEOUTS.backupMs,
+    );
+  });
+
+  it("should bound the connection test by its own timeout", async () => {
+    const captured: CapturedCall[] = [];
+    await clientWith(capturingRunner(captured)).testConnection();
+    expect((captured[0].options as any).timeoutMs).toBe(
+      TEST_TIMEOUTS.connectionTestMs,
+    );
+  });
+
+  it("should pass the client abort signal to every invocation", async () => {
+    const controller = new AbortController();
+    const captured: CapturedCall[] = [];
+    const client = new ResticClient(
+      makeProject(),
+      capturingRunner(captured),
+      TEST_TIMEOUTS,
+      controller.signal,
+    );
+    await client.snapshots();
+    expect((captured[0].options as any).signal).toBe(controller.signal);
+  });
+
+  it("should map a timeout to a 504 sync error", async () => {
+    const runner: ResticRunner = async () => result({ timedOut: true });
+    const client = clientWith(runner);
+    try {
+      await client.snapshots();
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResticSyncError);
+      expect((e as ResticSyncError).statusCode).toBe(504);
+      expect((e as Error).message).toContain("timed out after");
+      expect((e as Error).message).toContain("snapshot listing");
+    }
+  });
+
+  it("should map an abort to a 499 sync error", async () => {
+    const runner: ResticRunner = async () => result({ aborted: true });
+    const client = clientWith(runner);
+    try {
+      await client.restore("abcd1234", "/tmp/restore");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResticSyncError);
+      expect((e as ResticSyncError).statusCode).toBe(499);
+    }
+  });
+
+  it("should default to the built-in timeouts", async () => {
+    const captured: CapturedCall[] = [];
+    const client = new ResticClient(makeProject(), capturingRunner(captured));
+    await client.snapshots();
+    expect((captured[0].options as any).timeoutMs).toBe(
+      DEFAULT_RESTIC_TIMEOUTS.snapshotsMs,
+    );
+  });
+});
+
+describe("defaultResticRunner process control", () => {
+  const hangingScript = (pidFile: string) => `
+    process.on("SIGTERM", () => {});
+    require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+    setInterval(() => {}, 1000);
+  `;
+
+  it("should SIGKILL a process ignoring SIGTERM and leave no orphan", async () => {
+    const pidFile = path.join(
+      os.tmpdir(),
+      `rsm-restic-hang-${Date.now()}-${Math.random()}.pid`,
+    );
+    const startedAt = Date.now();
+    try {
+      const outcome = await defaultResticRunner(
+        process.execPath,
+        ["-e", hangingScript(pidFile)],
+        process.env,
+        undefined,
+        { timeoutMs: 500, killGraceMs: 200 },
+      );
+      expect(outcome.timedOut).toBe(true);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+
+      const pid = Number(await fse.readFile(pidFile, "utf-8"));
+      expect(Number.isInteger(pid)).toBe(true);
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      await fse.remove(pidFile);
+    }
+  });
+
+  it("should kill the process when the abort signal fires", async () => {
+    const pidFile = path.join(
+      os.tmpdir(),
+      `rsm-restic-abort-${Date.now()}-${Math.random()}.pid`,
+    );
+    const controller = new AbortController();
+    try {
+      const pending = defaultResticRunner(
+        process.execPath,
+        ["-e", hangingScript(pidFile)],
+        process.env,
+        undefined,
+        { timeoutMs: 10_000, killGraceMs: 200, signal: controller.signal },
+      );
+      setTimeout(() => controller.abort(), 500);
+      const outcome = await pending;
+      expect(outcome.aborted).toBe(true);
+
+      const pid = Number(await fse.readFile(pidFile, "utf-8"));
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      await fse.remove(pidFile);
+    }
+  });
+});
+
+describe("parseBackupSnapshotId", () => {
+  it("should extract the summary snapshot id", () => {
+    const stdout = [
+      JSON.stringify({ message_type: "status", percent_done: 1 }),
+      JSON.stringify({ message_type: "summary", snapshot_id: "abc123" }),
+    ].join("\n");
+    expect(parseBackupSnapshotId(stdout)).toBe("abc123");
+  });
+
+  it("should return null when there is no summary id", () => {
+    expect(parseBackupSnapshotId("")).toBeNull();
+    expect(parseBackupSnapshotId("not json")).toBeNull();
+    expect(
+      parseBackupSnapshotId(
+        JSON.stringify({ message_type: "summary", snapshot_id: "" }),
+      ),
+    ).toBeNull();
   });
 });
 
@@ -386,6 +636,8 @@ describe("ResticClient testConnection", () => {
     expect(captured[0].args.slice(-2)).toEqual(["snapshots", "--json"]);
     expect(captured[0].options).toEqual({
       timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
+      killGraceMs: DEFAULT_RESTIC_TIMEOUTS.killGraceMs,
+      signal: undefined,
     });
     expect(CONNECTION_TEST_TIMEOUT_MS).toBe(30_000);
   });

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSyncExecutionRequest,
   keyValueHint,
   MASKED_VALUE,
   pusherLabel,
+  shortSnapshotId,
   statusIcon,
   statusLabel,
   summarizePreview,
@@ -127,5 +129,40 @@ describe("pusherLabel", () => {
 describe("MASKED_VALUE", () => {
   it("should be a placeholder that is not empty", () => {
     expect(MASKED_VALUE.length).toBeGreaterThan(0);
+  });
+});
+
+describe("shortSnapshotId", () => {
+  it("should shorten a restic snapshot id to eight characters", () => {
+    expect(
+      shortSnapshotId("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+    ).toBe("01234567");
+  });
+
+  it("should tolerate missing and short ids", () => {
+    expect(shortSnapshotId(undefined)).toBe("");
+    expect(shortSnapshotId("")).toBe("");
+    expect(shortSnapshotId("abc")).toBe("abc");
+  });
+});
+
+describe("buildSyncExecutionRequest", () => {
+  it("should send the pinned snapshot id with a pull", () => {
+    expect(buildSyncExecutionRequest("pull", "p1", "snap-1234")).toEqual({
+      url: "/projects/p1/pull",
+      body: { snapshotId: "snap-1234" },
+    });
+  });
+
+  it("should discard without a body", () => {
+    expect(buildSyncExecutionRequest("discard", "p1", "snap-1234")).toEqual({
+      url: "/projects/p1/discard",
+    });
+  });
+
+  it("should restore the pinned snapshot through the history route", () => {
+    expect(buildSyncExecutionRequest("snapshot", "p1", "snap-1234")).toEqual({
+      url: "/projects/p1/snapshots/snap-1234/restore",
+    });
   });
 });

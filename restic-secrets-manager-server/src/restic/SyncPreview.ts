@@ -10,9 +10,11 @@ import {
   computeSecretsDiff,
   SecretsDiffResult,
 } from "../secrets/SecretsDiff";
-import { latestSnapshot, ResticClient } from "./ResticClient";
+import { latestSnapshot, ResticClient, ResticSnapshot } from "./ResticClient";
+import { ResticSyncError } from "./ResticErrors";
+import { resticTimeoutsFromConfig } from "./ResticTimeouts";
 import { SyncLocksRun } from "./SyncLocks";
-import { ResticSyncError, readSnapshotSecrets } from "./SyncService";
+import { readSnapshotSecrets } from "./SyncService";
 import {
   createTemporaryWorkDir,
   ensurePrivateDir,
@@ -51,17 +53,22 @@ export const SyncPreviewDataApi: SyncPreviewDataLayer = {
 
 /**
  * Preview of a pull: the diff between the current project secrets and the
- * content of the latest snapshot of the repository. Rejected with 404 when
- * the repository is empty. Serialized per project.
+ * content of the latest snapshot of the repository. The returned
+ * `snapshotId` pins the snapshot the confirmed pull must apply. Rejected
+ * with 404 when the repository is empty. Serialized per project.
  */
 export async function ResticSyncPreviewPull(
   context: Span,
   config: Config,
   project: Project,
   dataApi: SyncPreviewDataLayer = SyncPreviewDataApi,
+  signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncPreviewPullUnlocked(context, config, project, dataApi),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncPreviewPullUnlocked(context, config, project, dataApi, signal),
+    context,
   );
 }
 
@@ -70,17 +77,31 @@ async function resticSyncPreviewPullUnlocked(
   config: Config,
   project: Project,
   dataApi: SyncPreviewDataLayer,
+  signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this preview was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
-  const client = new ResticClient(project);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
+  // The pull preview lists the snapshots once and diffs the resolved latest.
   const snapshots = await client.snapshots();
   const latest = latestSnapshot(snapshots);
   if (!latest) {
     throw new ResticSyncError("Repository is empty: no snapshot to pull", 404);
   }
-  return previewSnapshotContent(context, config, project, latest.id, dataApi);
+  return previewSnapshotContent(
+    context,
+    config,
+    project,
+    client,
+    latest,
+    dataApi,
+  );
 }
 
 /**
@@ -94,15 +115,20 @@ export async function ResticSyncPreviewRestoreSnapshot(
   project: Project,
   snapshotId: string,
   dataApi: SyncPreviewDataLayer = SyncPreviewDataApi,
+  signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncPreviewRestoreSnapshotUnlocked(
-      context,
-      config,
-      project,
-      snapshotId,
-      dataApi,
-    ),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncPreviewRestoreSnapshotUnlocked(
+        context,
+        config,
+        project,
+        snapshotId,
+        dataApi,
+        signal,
+      ),
+    context,
   );
 }
 
@@ -112,11 +138,33 @@ async function resticSyncPreviewRestoreSnapshotUnlocked(
   project: Project,
   snapshotId: string,
   dataApi: SyncPreviewDataLayer,
+  signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this preview was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
-  return previewSnapshotContent(context, config, project, snapshotId, dataApi);
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
+  const snapshots = await client.snapshots();
+  const target = snapshots.find((snapshot) => snapshot.id === snapshotId);
+  if (!target) {
+    throw new ResticSyncError(
+      `Snapshot not found in the repository: ${snapshotId}`,
+      404,
+    );
+  }
+  return previewSnapshotContent(
+    context,
+    config,
+    project,
+    client,
+    target,
+    dataApi,
+  );
 }
 
 /**
@@ -130,14 +178,19 @@ export async function ResticSyncPreviewDiscardLocalChanges(
   config: Config,
   project: Project,
   dataApi: SyncPreviewDataLayer = SyncPreviewDataApi,
+  signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
-  return SyncLocksRun(project.id, () =>
-    resticSyncPreviewDiscardLocalChangesUnlocked(
-      context,
-      config,
-      project,
-      dataApi,
-    ),
+  return SyncLocksRun(
+    project.id,
+    () =>
+      resticSyncPreviewDiscardLocalChangesUnlocked(
+        context,
+        config,
+        project,
+        dataApi,
+        signal,
+      ),
+    context,
   );
 }
 
@@ -146,6 +199,7 @@ async function resticSyncPreviewDiscardLocalChangesUnlocked(
   config: Config,
   project: Project,
   dataApi: SyncPreviewDataLayer,
+  signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
   // Re-read the project under the lock: a queued sync may have moved the
   // last synchronized state while this preview was waiting.
@@ -156,42 +210,50 @@ async function resticSyncPreviewDiscardLocalChangesUnlocked(
       409,
     );
   }
+  const client = new ResticClient(
+    project,
+    undefined,
+    resticTimeoutsFromConfig(config),
+    signal,
+  );
+  const snapshots = await client.snapshots();
+  const target = snapshots.find(
+    (snapshot) => snapshot.id === project.lastSyncSnapshotId,
+  );
+  if (!target) {
+    throw new ResticSyncError(
+      `Snapshot not found in the repository: ${project.lastSyncSnapshotId}`,
+      404,
+    );
+  }
   return previewSnapshotContent(
     context,
     config,
     project,
-    project.lastSyncSnapshotId,
+    client,
+    target,
     dataApi,
   );
 }
 
 /**
- * Restores the given snapshot into a temporary directory, reads its
- * secret files and diffs them against the current project secrets.
- * The temporary directory is always removed; nothing is written to the
- * database.
+ * Restores the given (already resolved) snapshot into a temporary
+ * directory, reads its secret files and diffs them against the current
+ * project secrets. The temporary directory is always removed; nothing is
+ * written to the database.
  */
 async function previewSnapshotContent(
   context: Span,
   config: Config,
   project: Project,
-  snapshotId: string,
+  client: ResticClient,
+  target: ResticSnapshot,
   dataApi: SyncPreviewDataLayer,
 ): Promise<SyncPreviewResult> {
-  const client = new ResticClient(project);
   const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
   try {
     await ensurePrivateDir(restoreDir);
-
-    const snapshots = await client.snapshots();
-    const target = snapshots.find((snapshot) => snapshot.id === snapshotId);
-    if (!target) {
-      throw new ResticSyncError(
-        `Snapshot not found in the repository: ${snapshotId}`,
-        404,
-      );
-    }
 
     await client.restore(target.id, restoreDir);
     await restrictTreePermissions(restoreDir);

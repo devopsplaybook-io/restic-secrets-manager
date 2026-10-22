@@ -61,9 +61,6 @@ function mockClient(
     restore: jest.fn().mockImplementation(async (_id: string, target: string) => {
       await fse.writeJson(path.join(target, "api.json"), { K1: "v1" });
     }),
-    restoreLatest: jest.fn().mockImplementation(async (target: string) => {
-      await fse.writeJson(path.join(target, "api.json"), { K1: "v1" });
-    }),
     repoInitialized: jest.fn().mockResolvedValue(true),
     init: jest.fn().mockResolvedValue(undefined),
     backup: jest.fn().mockResolvedValue(undefined),
@@ -93,7 +90,7 @@ function dataApiStub(
 
 describe("ResticSyncPreviewPull", () => {
   it("should diff the current secrets against the latest snapshot content", async () => {
-    mockClient({
+    const client = mockClient({
       snapshots: jest.fn().mockResolvedValue([
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       ]),
@@ -107,6 +104,12 @@ describe("ResticSyncPreviewPull", () => {
       dataApi,
     );
 
+    // The snapshots are listed once and the resolved latest is pinned
+    expect(client.snapshots).toHaveBeenCalledTimes(1);
+    expect(client.restore).toHaveBeenCalledWith(
+      "snapshot-1",
+      expect.any(String),
+    );
     expect(preview.snapshotId).toBe("snapshot-1");
     expect(preview.snapshotTime).toBe("2026-01-01T10:00:00Z");
     expect(preview.summary.secretsChanged).toBe(1);

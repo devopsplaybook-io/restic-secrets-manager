@@ -2,6 +2,7 @@ export {
   DbUtilsSetOTel,
   DbUtilsInit,
   DbUtilsGetDatabase,
+  DbUtilsWithLock,
   convertToPostgresPlaceholders,
   DbUtilsExecSQL,
   DbUtilsQuerySQL,
