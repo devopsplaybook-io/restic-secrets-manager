@@ -12,6 +12,18 @@ describe("parseSecretImport (.env)", () => {
     });
   });
 
+  it("should accept LF, CRLF and CR line endings", () => {
+    expect(parseSecretImport("A=1\r\nB=2\rC=3\nD=4")).toEqual({
+      rows: [
+        { key: "A", value: "1" },
+        { key: "B", value: "2" },
+        { key: "C", value: "3" },
+        { key: "D", value: "4" },
+      ],
+      warnings: [],
+    });
+  });
+
   it("should skip blank and comment lines and trim values", () => {
     expect(
       parseSecretImport("# comment\n\n  KEY =  value with spaces  \n"),
@@ -47,6 +59,51 @@ describe("parseSecretImport (.env)", () => {
     });
   });
 
+  it("should decode \\r and \\uXXXX escapes written by the canonical export", () => {
+    expect(parseSecretImport('A="line1\\rline2"\nB="a\\u0001b"\nC="a\\u007fb"'))
+      .toEqual({
+        rows: [
+          { key: "A", value: "line1\rline2" },
+          { key: "B", value: "a\u0001b" },
+          { key: "C", value: "a\u007fb" },
+        ],
+        warnings: [],
+      });
+  });
+
+  it("should leave an unknown escape sequence untouched", () => {
+    expect(parseSecretImport('A="a\\qb"')).toEqual({
+      rows: [{ key: "A", value: "a\\qb" }],
+      warnings: [],
+    });
+  });
+
+  it("should parse every value shape emitted by the canonical server export", () => {
+    const fixtures: Array<{ line: string; key: string; value: string }> = [
+      { line: "PLAIN=value", key: "PLAIN", value: "value" },
+      { line: 'EMPTY=""', key: "EMPTY", value: "" },
+      { line: 'SPACED=" spaced "', key: "SPACED", value: " spaced " },
+      { line: 'EQUAL="a=b"', key: "EQUAL", value: "a=b" },
+      { line: 'HASH="a#b"', key: "HASH", value: "a#b" },
+      { line: 'QUOTE="say \\"hi\\""', key: "QUOTE", value: 'say "hi"' },
+      { line: 'SINGLE="it\'s"', key: "SINGLE", value: "it's" },
+      { line: 'BACKSLASH="a\\\\b"', key: "BACKSLASH", value: "a\\b" },
+      { line: 'TRAILING="a\\\\"', key: "TRAILING", value: "a\\" },
+      { line: 'LF="a\\nb"', key: "LF", value: "a\nb" },
+      { line: 'CR="a\\rb"', key: "CR", value: "a\rb" },
+      { line: 'TAB="a\\tb"', key: "TAB", value: "a\tb" },
+      { line: 'CTRL="a\\u0001b"', key: "CTRL", value: "a\u0001b" },
+      { line: 'DEL="a\\u007fb"', key: "DEL", value: "a\u007fb" },
+      { line: "UNICODE=héllo wörld", key: "UNICODE", value: "héllo wörld" },
+    ];
+    for (const fixture of fixtures) {
+      expect(parseSecretImport(fixture.line)).toEqual({
+        rows: [{ key: fixture.key, value: fixture.value }],
+        warnings: [],
+      });
+    }
+  });
+
   it("should keep the last duplicate key and warn", () => {
     expect(parseSecretImport("A=1\nA=2")).toEqual({
       rows: [{ key: "A", value: "2" }],
@@ -66,6 +123,31 @@ describe("parseSecretImport (.env)", () => {
     );
   });
 
+  it("should reject keys that are not valid environment variable names", () => {
+    expect(() => parseSecretImport("1KEY=value")).toThrow(
+      'Invalid .env line 1: invalid key "1KEY" (keys must match ^[A-Za-z_][A-Za-z0-9_]*$)',
+    );
+    expect(() => parseSecretImport("A-B=value")).toThrow(
+      'Invalid .env line 1: invalid key "A-B" (keys must match ^[A-Za-z_][A-Za-z0-9_]*$)',
+    );
+    expect(() => parseSecretImport("A B=value")).toThrow(
+      'Invalid .env line 1: invalid key "A B" (keys must match ^[A-Za-z_][A-Za-z0-9_]*$)',
+    );
+    expect(() => parseSecretImport("A#B=value")).toThrow(
+      'Invalid .env line 1: invalid key "A#B" (keys must match ^[A-Za-z_][A-Za-z0-9_]*$)',
+    );
+  });
+
+  it("should accept keys starting with an underscore or containing digits", () => {
+    expect(parseSecretImport("_PRIVATE=x\nA_1=y")).toEqual({
+      rows: [
+        { key: "_PRIVATE", value: "x" },
+        { key: "A_1", value: "y" },
+      ],
+      warnings: [],
+    });
+  });
+
   it("should reject input without any KEY=value line", () => {
     expect(() => parseSecretImport("# only comments\n\n")).toThrow(
       "Nothing to import: no KEY=value line found",
@@ -80,6 +162,16 @@ describe("parseSecretImport (JSON)", () => {
         { key: "A", value: "x" },
         { key: "B", value: "2" },
         { key: "C", value: "true" },
+      ],
+      warnings: [],
+    });
+  });
+
+  it("should accept non-env-safe keys, which JSON can represent", () => {
+    expect(parseSecretImport('{"A B": "x", "_n": "y"}')).toEqual({
+      rows: [
+        { key: "A B", value: "x" },
+        { key: "_n", value: "y" },
       ],
       warnings: [],
     });

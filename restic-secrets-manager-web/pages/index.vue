@@ -161,6 +161,11 @@
           <div v-if="testResult" class="test-result" :class="`test-result--${testResult.status}`">
             <i class="bi" :class="testResultIcon"/>
             <span>{{ testResult.message }}</span>
+            <ul v-if="testResult.warnings && testResult.warnings.length > 0" class="test-result-warnings">
+              <li v-for="warning in testResult.warnings" :key="warning">
+                {{ warning }}
+              </li>
+            </ul>
           </div>
           <footer class="dialog-footer">
             <button class="secondary" @click="closeCreateModal">Cancel</button>
@@ -801,11 +806,19 @@ async function onHistoryRestored() {
 /* Inline connection test outcome inside the create dialog */
 .test-result {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
   font-size: var(--text-base);
+}
+
+.test-result-warnings {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 1.5em;
+  font-size: var(--text-sm);
 }
 
 .test-result--ok {

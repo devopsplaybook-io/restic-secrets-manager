@@ -1,5 +1,11 @@
 import type { Span } from "@opentelemetry/sdk-trace";
-import { DbUtilsExecSQL, DbUtilsQuerySQL } from "../utils-std-ts/DbUtils";
+import {
+  convertToPostgresPlaceholders,
+  DbUtilsExecSQL,
+  DbUtilsGetDatabase,
+  DbUtilsGetType,
+  DbUtilsQuerySQL,
+} from "../utils-std-ts/DbUtils";
 import { Project } from "../model/Project";
 
 export async function ProjectsDataGet(
@@ -42,6 +48,24 @@ export async function ProjectsDataList(context?: Span): Promise<Project[]> {
   return projects;
 }
 
+/**
+ * Finds the project already using a normalized repository target, if any.
+ * Projects are few: the comparison runs on the loaded list so the
+ * normalization stays in one place.
+ */
+export async function ProjectsDataGetByRepoTarget(
+  context: Span | undefined,
+  targetKey: string,
+): Promise<Project | null> {
+  const projects = await ProjectsDataList(context);
+  for (const project of projects) {
+    if (project.repoTargetKey() === targetKey) {
+      return project;
+    }
+  }
+  return null;
+}
+
 export async function ProjectsDataAdd(
   context: Span | undefined,
   project: Project,
@@ -62,11 +86,46 @@ export async function ProjectsDataAdd(
   ]);
 }
 
-export async function ProjectsDataDelete(
+/**
+ * Deletes a project and its secrets in one transaction. The cascading
+ * foreign key is the safety net for direct data-layer deletes; the explicit
+ * secret delete keeps both dialects consistent even before the constraint
+ * exists.
+ */
+export async function ProjectsDataDeleteCascade(
   context: Span | undefined,
-  id: string,
+  projectId: string,
 ): Promise<void> {
-  await DbUtilsExecSQL(context, SQL_QUERIES.DELETE_PROJECT, [id]);
+  if (DbUtilsGetType() === "sqlite") {
+    // better-sqlite3 executes synchronously: do not await inside the
+    // transaction callback or it would commit before the statements run.
+    const db = DbUtilsGetDatabase();
+    const apply = db.transaction(() => {
+      DbUtilsExecSQL(context, SQL_QUERIES.DELETE_PROJECT_SECRETS, [projectId]);
+      DbUtilsExecSQL(context, SQL_QUERIES.DELETE_PROJECT, [projectId]);
+    });
+    apply();
+    return;
+  }
+  const pool = DbUtilsGetDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      convertToPostgresPlaceholders(SQL_QUERIES.DELETE_PROJECT_SECRETS),
+      [projectId],
+    );
+    await client.query(
+      convertToPostgresPlaceholders(SQL_QUERIES.DELETE_PROJECT),
+      [projectId],
+    );
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -126,6 +185,7 @@ const SQL_QUERIES = {
   INSERT_PROJECT:
     'INSERT INTO projects ("id", "name", "description", "s3Endpoint", "s3Bucket", "repoPrefix", "s3Region", "s3BucketLookup", "s3AccessKeyId", "s3SecretAccessKey", "resticPassword", "dateCreated") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   DELETE_PROJECT: 'DELETE FROM projects WHERE "id" = ?',
+  DELETE_PROJECT_SECRETS: 'DELETE FROM secrets WHERE "projectId" = ?',
   UPDATE_SYNC_STATE:
     'UPDATE projects SET "lastSyncSnapshotId" = ?, "lastSyncSnapshotTime" = ?, "lastSyncContentHash" = ?, "currentContentHash" = ? WHERE "id" = ?',
   UPDATE_CURRENT_CONTENT_HASH:

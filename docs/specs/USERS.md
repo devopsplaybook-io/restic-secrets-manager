@@ -28,6 +28,7 @@
 - [x] By default, a new user has access to no project
 - [x] Access is granted/revoked by admins from the user management UI
 - [x] Access changes take effect immediately (authorization is checked against the database, not the token)
+- [x] Deleting a project removes its access scope from the stored user records (best effort, so users do not keep a dangling grant)
 - [x] Authorization resolves the live user and role from the database on every request (cached per request); the JWT role claim is never authoritative, so a demoted admin loses admin rights on the next request
 - [x] Requests from users that no longer exist in the database are rejected as unauthenticated (`401`)
 

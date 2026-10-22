@@ -40,8 +40,7 @@ describe("Project repositoryUrl", () => {
   });
 });
 
-describe("Project validateNew", () => {
-  it("should require name, endpoint, bucket and credentials", () => {
+describe("Project validateNew", () => {  it("should require name, endpoint, bucket and credentials", () => {
     const errors = Project.validateNew({});
     expect(errors).toEqual([
       "Invalid project: name is required",
@@ -83,6 +82,108 @@ describe("Project validateNew", () => {
 
   it("should reject non-object payloads", () => {
     expect(Project.validateNew(null as any).length).toBe(1);
+  });
+
+  it("should reject a name whose slug produces an empty repository prefix", () => {
+    const errors = Project.validateNew({
+      name: "ÀÉÎ",
+      s3Endpoint: "s3.example.com",
+      s3Bucket: "bucket",
+      s3AccessKeyId: "key",
+      s3SecretAccessKey: "secret",
+      resticPassword: "password",
+    });
+    expect(errors).toEqual([
+      "Invalid project: repository prefix is required (the name produces an empty default prefix)",
+    ]);
+  });
+
+  it("should accept a name with an empty slug when an explicit prefix is given", () => {
+    expect(
+      Project.validateNew({
+        name: "ÀÉÎ",
+        repoPrefix: "custom-prefix",
+        s3Endpoint: "s3.example.com",
+        s3Bucket: "bucket",
+        s3AccessKeyId: "key",
+        s3SecretAccessKey: "secret",
+        resticPassword: "password",
+      }),
+    ).toEqual([]);
+  });
+
+  it("should reject an explicit prefix that normalizes to empty", () => {
+    const errors = Project.validateNew({
+      name: "Valid Name",
+      repoPrefix: "///",
+      s3Endpoint: "s3.example.com",
+      s3Bucket: "bucket",
+      s3AccessKeyId: "key",
+      s3SecretAccessKey: "secret",
+      resticPassword: "password",
+    });
+    expect(errors).toEqual([
+      "Invalid project: repository prefix is required (the name produces an empty default prefix)",
+    ]);
+  });
+});
+
+describe("Project repoTarget", () => {
+  function project(overrides: Partial<Project> = {}): Project {
+    const created = new Project();
+    created.name = "My App";
+    created.s3Endpoint = "s3.example.com";
+    created.s3Bucket = "bucket";
+    return Object.assign(created, overrides);
+  }
+
+  it("should normalize scheme, endpoint case and trailing slashes", () => {
+    const https = project({
+      s3Endpoint: "  HTTPS://S3.Example.com/  ",
+      s3Bucket: " Bucket ",
+    });
+    const plain = project({ s3Endpoint: "s3.example.com", s3Bucket: "bucket" });
+    expect(https.repoTarget()).toEqual({
+      s3Endpoint: "s3.example.com",
+      s3Bucket: "bucket",
+      repoPrefix: "my-app",
+    });
+    expect(https.repoTargetKey()).toBe(plain.repoTargetKey());
+  });
+
+  it("should strip surrounding slashes from the effective prefix but keep its case", () => {
+    const target = project({ repoPrefix: " /Apps/MyApp/ " }).repoTarget();
+    expect(target.repoPrefix).toBe("Apps/MyApp");
+    expect(project({ repoPrefix: "apps/myapp" }).repoTargetKey()).not.toBe(
+      project({ repoPrefix: "Apps/MyApp" }).repoTargetKey(),
+    );
+  });
+
+  it("should make slug collisions of the project name identical targets", () => {
+    expect(project({ name: "My App" }).repoTargetKey()).toBe(
+      project({ name: "my-app" }).repoTargetKey(),
+    );
+    expect(project({ name: "a b" }).repoTargetKey()).toBe(
+      project({ name: "a-b" }).repoTargetKey(),
+    );
+  });
+
+  it("should keep different buckets or prefixes distinct", () => {
+    expect(project({ s3Bucket: "bucket" }).repoTargetKey()).not.toBe(
+      project({ s3Bucket: "other-bucket" }).repoTargetKey(),
+    );
+    expect(project({ repoPrefix: "prefix-a" }).repoTargetKey()).not.toBe(
+      project({ repoPrefix: "prefix-b" }).repoTargetKey(),
+    );
+  });
+
+  it("should not change the effective prefix of existing projects", () => {
+    const legacy = project({ name: "My App" });
+    expect(legacy.effectiveRepoPrefix()).toBe("my-app");
+    expect(legacy.repositoryUrl()).toBe(
+      "s3:https://s3.example.com/bucket/my-app",
+    );
+    expect(legacy.toTransportJson().repoPrefix).toBe("my-app");
   });
 });
 

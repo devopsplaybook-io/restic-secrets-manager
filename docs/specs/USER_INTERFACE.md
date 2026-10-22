@@ -45,8 +45,9 @@
 
 - [x] The create-project dialog has a "Test connection" action that checks the entered settings read-only against the restic repository and shows the outcome inline: the repository is empty (it will be initialized on the first push), the connection succeeds with the number of snapshots found, or the connection failed with a clear error
 - [x] The connection test result is cleared when any setting is edited afterwards, and the create actions are disabled while a test or a creation is running
+- [x] The connection test shows the server warnings inline: the repository target is already used by another project, and the repository already contains snapshots that cannot be correlated with the project (likely a wrong prefix)
 - [x] The create-project dialog has a review step before creation: it summarizes the entered settings (access key ID readable, secret key and restic password masked), shows the resolved repository URL and warns that the settings cannot be changed after creation; Back returns to the form with the values preserved
-- [x] Creation errors (duplicate name, validation) are shown inside the dialog so the settings can be corrected
+- [x] Creation errors (duplicate name, duplicate repository target, validation) are shown inside the dialog so the settings can be corrected
 - [x] The home page empty state invites admins to create their first project and tells other users to ask an administrator for access
 - [x] The secrets list empty state invites the user to add their first secret
 - [x] Admins see a dismissible "Getting started" checklist on the home page with three steps mirroring the documentation (create a project, grant users access, sync your secrets); each step shows its completion state, the checklist hides itself once every step is done and the dismissal is remembered in the browser
@@ -75,5 +76,11 @@
 - [x] In create mode, a collapsible "Import from .env or JSON" block parses pasted content into key/value rows and reports parse errors and duplicate-key warnings inline
 - [x] Closing the editor (Cancel, ×, backdrop, Esc), navigating away or closing the tab with unsaved changes asks for a confirmation ("Discard unsaved changes?") before discarding them
 - [x] When unsaved edits existed during a session-expiry redirect, reopening the project page offers to restore them (as an edit of the same secret when it still exists, otherwise as a new secret with the name prefilled)
+- [x] Restored drafts are loaded as unsaved edits (their baseline is the persisted secret), so closing the editor still asks for confirmation
+- [x] Saving a secret sends the version that was read: when the secret was modified by another user meanwhile, the editor reloads it, keeps the edits and shows "modified by another user, review and save again" instead of overwriting; if the secret was deleted, the kept edits become a new secret
+- [x] Copying a key to another secret uses the partial key update and retries once after a version conflict: unchanged keys of the target are never overwritten
+- [x] Keys that cannot be exported as .env (not matching `[A-Za-z_][A-Za-z0-9_]*`) are flagged with a non-blocking warning in the editor
+- [x] Importing .env content rejects invalid environment variable names with the offending line number; JSON import keeps accepting any key
+- [x] "Copy as .env" uses the server export (canonical escaping and key validation): invalid keys surface the server explanation, and "Copy as JSON" remains available
 
 Last spec review: 2026-10-22

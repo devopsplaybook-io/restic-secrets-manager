@@ -1,29 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { secretToEnvContent, secretToJsonContent } from "./secret-export";
-
-describe("secretToEnvContent", () => {
-  it("should write simple values as KEY=value lines", () => {
-    expect(
-      secretToEnvContent([
-        { key: "A", value: "1" },
-        { key: "B", value: "hello world" },
-      ]),
-    ).toBe("A=1\nB=hello world\n");
-  });
-
-  it("should quote and escape values with newlines, tabs, quotes or surrounding spaces", () => {
-    expect(secretToEnvContent([{ key: "CERT", value: "-----BEGIN-----\nabc\n-----END-----" }]))
-      .toBe('CERT="-----BEGIN-----\\nabc\\n-----END-----"\n');
-    expect(secretToEnvContent([{ key: "TAB", value: "a\tb" }])).toBe('TAB="a\\tb"\n');
-    expect(secretToEnvContent([{ key: "QUOTE", value: 'say "hi"' }])).toBe(
-      'QUOTE="say \\"hi\\""\n',
-    );
-    expect(secretToEnvContent([{ key: "PADDED", value: " spaced " }])).toBe('PADDED=" spaced "\n');
-    // A literal backslash needs no quoting: unescaping only applies inside
-    // double quotes, so it round-trips as-is
-    expect(secretToEnvContent([{ key: "BACKSLASH", value: "a\\nb" }])).toBe("BACKSLASH=a\\nb\n");
-  });
-});
+import { secretToJsonContent } from "./secret-export";
 
 describe("secretToJsonContent", () => {
   it("should write a pretty-printed JSON object", () => {
@@ -33,5 +9,16 @@ describe("secretToJsonContent", () => {
         { key: "B", value: "x\ny" },
       ]),
     ).toBe('{\n  "A": "1",\n  "B": "x\\ny"\n}\n');
+  });
+
+  it("should keep non-env-safe keys and control characters lossless", () => {
+    const content = secretToJsonContent([
+      { key: "A B", value: "line1\r\nline2" },
+      { key: "N", value: "a\u0001b" },
+    ]);
+    expect(JSON.parse(content)).toEqual({
+      "A B": "line1\r\nline2",
+      N: "a\u0001b",
+    });
   });
 });

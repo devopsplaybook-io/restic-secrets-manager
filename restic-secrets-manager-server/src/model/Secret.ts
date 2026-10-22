@@ -34,7 +34,14 @@ export class Secret {
     if (json.dateUpdated) {
       secret.dateUpdated = json.dateUpdated as string;
     }
+    secret.version = Secret.normalizeVersion(json.version);
     return secret;
+  }
+
+  private static normalizeVersion(value: unknown): number {
+    const parsed =
+      typeof value === "number" ? value : parseInt(String(value ?? ""), 10);
+    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
   }
 
   /**
@@ -145,6 +152,8 @@ export class Secret {
   public data: SecretData = {};
   public dateCreated: string;
   public dateUpdated: string;
+  /** Optimistic concurrency counter, incremented on every update. */
+  public version = 1;
 
   constructor() {
     this.id = uuidv4();
@@ -161,6 +170,7 @@ export class Secret {
       data: this.data,
       dateCreated: this.dateCreated,
       dateUpdated: this.dateUpdated,
+      version: this.version,
     };
   }
 
@@ -172,6 +182,7 @@ export class Secret {
       data: this.data,
       dateCreated: this.dateCreated,
       dateUpdated: this.dateUpdated,
+      version: this.version,
     };
   }
 }

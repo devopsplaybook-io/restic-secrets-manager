@@ -12,8 +12,7 @@ jest.mock("./SecretsData", () => ({
   SecretsDataGet: jest.fn(),
   SecretsDataGetByName: jest.fn(),
   SecretsDataListForProject: jest.fn(),
-  SecretsDataUpdateData: jest.fn(),
-  SecretsDataUpdateName: jest.fn(),
+  SecretsDataUpdate: jest.fn(),
 }));
 
 jest.mock("./SecretsHash", () => ({
@@ -27,8 +26,7 @@ import {
   SecretsDataGet,
   SecretsDataGetByName,
   SecretsDataListForProject,
-  SecretsDataUpdateData,
-  SecretsDataUpdateName,
+  SecretsDataUpdate,
 } from "./SecretsData";
 import { SecretsHashRefreshForProject } from "./SecretsHash";
 
@@ -38,8 +36,7 @@ const deleteMock = SecretsDataDelete as jest.Mock;
 const getMock = SecretsDataGet as jest.Mock;
 const getByNameMock = SecretsDataGetByName as jest.Mock;
 const listMock = SecretsDataListForProject as jest.Mock;
-const updateDataMock = SecretsDataUpdateData as jest.Mock;
-const updateNameMock = SecretsDataUpdateName as jest.Mock;
+const updateMock = SecretsDataUpdate as jest.Mock;
 const hashRefreshMock = SecretsHashRefreshForProject as jest.Mock;
 
 function secretFixture(overrides: Partial<Secret> = {}): Secret {
@@ -48,6 +45,16 @@ function secretFixture(overrides: Partial<Secret> = {}): Secret {
   secret.name = "existing";
   secret.data = { KEY: "value" };
   return Object.assign(secret, overrides);
+}
+
+/** Applies the version bump the real data layer performs on success. */
+function updateSucceeds(): void {
+  updateMock.mockImplementation(
+    async (_context: unknown, secret: Secret, expectedVersion: number) => {
+      secret.version = expectedVersion + 1;
+      return "updated";
+    },
+  );
 }
 
 /** Mirrors the real ProjectAccessEnsure denial (403 + null, no throw). */
@@ -152,6 +159,43 @@ describe("GET /:id/secrets/by-name/:name/export", () => {
     expect(res.body).toBe('CERT="line1\\nline2"\n');
   });
 
+  it("should reject an export with non-env-safe keys with a clear 400", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { "A B": "value" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('invalid key(s) "A B"');
+    expect(res.json().error).toContain("Use the JSON export instead");
+  });
+
+  it("should still export non-env-safe keys as JSON", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: { "A B": "value" } }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export?format=json",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ "A B": "value" });
+  });
+
+  it("should export empty data as an empty file", async () => {
+    getByNameMock.mockResolvedValue(
+      secretFixture({ name: "app-config", data: {} }),
+    );
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/secrets/by-name/app-config/export",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("");
+  });
+
   it("should return 404 for an unknown secret name", async () => {
     getByNameMock.mockResolvedValue(null);
     const res = await fastify.inject({
@@ -231,6 +275,7 @@ describe("POST /:id/secrets", () => {
       payload: { name: "existing", data: { KEY: "x" } },
     });
     expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("SECRET_NAME_CONFLICT");
     expect(addMock).not.toHaveBeenCalled();
   });
 
@@ -252,19 +297,37 @@ describe("POST /:id/secrets", () => {
 });
 
 describe("PUT /:id/secrets/:secretId", () => {
-  it("should rename and update the data of a secret", async () => {
+  it("should rename and update the data in one versioned update", async () => {
     const existing = secretFixture({ id: "s1", name: "old" });
     getMock.mockResolvedValue(existing);
     getByNameMock.mockResolvedValue(null);
+    updateSucceeds();
     const res = await fastify.inject({
       method: "PUT",
       url: "/p1/secrets/s1",
-      payload: { name: "new-name", data: { A: "1" } },
+      payload: { name: "new-name", data: { A: "1" }, version: 1 },
     });
     expect(res.statusCode).toBe(200);
-    expect(updateNameMock).toHaveBeenCalledTimes(1);
-    expect(updateDataMock).toHaveBeenCalledTimes(1);
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateMock.mock.calls[0][1].name).toBe("new-name");
+    expect(updateMock.mock.calls[0][1].data).toEqual({ A: "1" });
+    expect(updateMock.mock.calls[0][2]).toBe(1);
+    expect(res.json().secret.version).toBe(2);
     expect(hashRefreshMock).toHaveBeenCalledWith(undefined, "p1");
+  });
+
+  it("should require an integer version >= 1", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    for (const version of [undefined, 0, -1, 1.5, "1", null]) {
+      const res = await fastify.inject({
+        method: "PUT",
+        url: "/p1/secrets/s1",
+        payload: { data: { A: "1" }, version },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain("version is required");
+    }
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it("should return 404 when the secret belongs to another project", async () => {
@@ -272,10 +335,147 @@ describe("PUT /:id/secrets/:secretId", () => {
     const res = await fastify.inject({
       method: "PUT",
       url: "/p1/secrets/s1",
-      payload: { data: { A: "1" } },
+      payload: { data: { A: "1" }, version: 1 },
     });
     expect(res.statusCode).toBe(404);
-    expect(updateDataMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("should map a stale version to 409 with the conflict code", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    updateMock.mockResolvedValue("version_conflict");
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1",
+      payload: { data: { A: "1" }, version: 1 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("SECRET_VERSION_CONFLICT");
+    expect(res.json().error).toContain("modified by another user");
+    expect(hashRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it("should map a missing row reported by the update to 404", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    updateMock.mockResolvedValue("not_found");
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1",
+      payload: { data: { A: "1" }, version: 1 },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(hashRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 409 with the name code when renaming onto a taken name", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1", name: "old" }));
+    getByNameMock.mockResolvedValue(secretFixture({ id: "s2", name: "taken" }));
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1",
+      payload: { name: "taken", version: 1 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("SECRET_NAME_CONFLICT");
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("should map a unique violation from the update to 409", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1", name: "old" }));
+    getByNameMock.mockResolvedValue(null);
+    updateMock.mockRejectedValue(
+      Object.assign(
+        new Error("UNIQUE constraint failed: secrets.projectId, secrets.name"),
+        { code: "SQLITE_CONSTRAINT_UNIQUE" },
+      ),
+    );
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1",
+      payload: { name: "taken", version: 1 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("SECRET_NAME_CONFLICT");
+  });
+});
+
+describe("PUT /:id/secrets/:secretId/keys", () => {
+  it("should update only the selected key and echo the new version", async () => {
+    const existing = secretFixture({
+      id: "s1",
+      data: { A: "1", B: "2" },
+    });
+    getMock.mockResolvedValue(existing);
+    updateSucceeds();
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1/keys",
+      payload: { key: "B", value: "new", version: 1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    // The whole map still contains the unrelated key unchanged
+    expect(updateMock.mock.calls[0][1].data).toEqual({ A: "1", B: "new" });
+    expect(updateMock.mock.calls[0][2]).toBe(1);
+    expect(res.json().secret.data).toEqual({ A: "1", B: "new" });
+    expect(res.json().secret.version).toBe(2);
+    expect(hashRefreshMock).toHaveBeenCalledWith(undefined, "p1");
+  });
+
+  it("should reject a missing key, a non-scalar value or a missing version", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    const cases = [
+      { value: "x", version: 1 },
+      { key: "  ", value: "x", version: 1 },
+      { key: "K", value: { nested: true }, version: 1 },
+      { key: "K", value: ["a"], version: 1 },
+      { key: "K", value: "x" },
+    ];
+    for (const payload of cases) {
+      const res = await fastify.inject({
+        method: "PUT",
+        url: "/p1/secrets/s1/keys",
+        payload,
+      });
+      expect(res.statusCode).toBe(400);
+    }
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("should return 404 for an unknown secret", async () => {
+    getMock.mockResolvedValue(null);
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1/keys",
+      payload: { key: "K", value: "x", version: 1 },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("should map a stale version to 409", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    updateMock.mockResolvedValue("version_conflict");
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1/keys",
+      payload: { key: "K", value: "x", version: 1 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("SECRET_VERSION_CONFLICT");
+    expect(hashRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it("should send no-store headers", async () => {
+    getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    updateSucceeds();
+    const res = await fastify.inject({
+      method: "PUT",
+      url: "/p1/secrets/s1/keys",
+      payload: { key: "K", value: "x", version: 1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
   });
 });
 
@@ -344,10 +544,11 @@ describe("anti-caching headers", () => {
 
   it("should send no-store headers when an updated secret is echoed back", async () => {
     getMock.mockResolvedValue(secretFixture({ id: "s1" }));
+    updateSucceeds();
     const res = await fastify.inject({
       method: "PUT",
       url: "/p1/secrets/s1",
-      payload: { data: { A: "1" } },
+      payload: { data: { A: "1" }, version: 1 },
     });
     expect(res.statusCode).toBe(200);
     expectNoStore(res);
