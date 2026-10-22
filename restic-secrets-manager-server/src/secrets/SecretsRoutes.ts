@@ -5,6 +5,7 @@ import { OTelRequestSpan } from "../OTelContext";
 import {
   secretDataToEnvContent,
   secretDataToJsonContent,
+  SecretEnvError,
 } from "./SecretEnv";
 import {
   SecretsDataAdd,
@@ -12,8 +13,7 @@ import {
   SecretsDataGet,
   SecretsDataGetByName,
   SecretsDataListForProject,
-  SecretsDataUpdateData,
-  SecretsDataUpdateName,
+  SecretsDataUpdate,
 } from "./SecretsData";
 import { ProjectAccessEnsure } from "../users/ProjectAccess";
 import { SecretsHashRefreshForProject } from "./SecretsHash";
@@ -67,17 +67,27 @@ export class SecretsRoutes {
           .status(400)
           .send({ error: "Invalid format: env or json expected" });
       }
-      setSecretResponseHeaders(res);
       if (format === "json") {
+        setSecretResponseHeaders(res);
         return res
           .status(200)
           .header("content-type", "application/json")
           .send(secretDataToJsonContent(secret.data));
       }
+      let content: string;
+      try {
+        content = secretDataToEnvContent(secret.data);
+      } catch (e) {
+        if (e instanceof SecretEnvError) {
+          return res.status(400).send({ error: e.message });
+        }
+        throw e;
+      }
+      setSecretResponseHeaders(res);
       return res
         .status(200)
         .header("content-type", "text/plain; charset=utf-8")
-        .send(secretDataToEnvContent(secret.data));
+        .send(content);
     });
 
     //
@@ -97,9 +107,7 @@ export class SecretsRoutes {
       if (
         await SecretsDataGetByName(OTelRequestSpan(req), req.params.id, name)
       ) {
-        return res
-          .status(409)
-          .send({ error: "A secret with this name already exists" });
+        return secretNameConflict(res);
       }
       const secret = new Secret();
       secret.projectId = req.params.id;
@@ -109,9 +117,7 @@ export class SecretsRoutes {
         await SecretsDataAdd(OTelRequestSpan(req), secret);
       } catch (e) {
         if (isUniqueViolationError(e)) {
-          return res
-            .status(409)
-            .send({ error: "A secret with this name already exists" });
+          return secretNameConflict(res);
         }
         throw e;
       }
@@ -123,7 +129,7 @@ export class SecretsRoutes {
     //
     fastify.put<{
       Params: { id: string; secretId: string };
-      Body: { name?: string; data?: SecretData };
+      Body: { name?: string; data?: SecretData; version?: unknown };
     }>("/:id/secrets/:secretId", async (req, res) => {
       if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
         return;
@@ -136,6 +142,12 @@ export class SecretsRoutes {
         return res.status(404).send({ error: "Secret Not Found" });
       }
       const body = req.body || ({} as Record<string, unknown>);
+      const version = parseVersion(body.version);
+      if (version === null) {
+        return res.status(400).send({
+          error: "Invalid secret: version is required (read the secret again)",
+        });
+      }
       const hasName = body.name !== undefined;
       const hasData = body.data !== undefined;
       if (!hasName && !hasData) {
@@ -158,25 +170,107 @@ export class SecretsRoutes {
           newName,
         );
         if (existing && existing.id !== secret.id) {
-          return res
-            .status(409)
-            .send({ error: "A secret with this name already exists" });
-        }
-        secret.name = newName;
-        try {
-          await SecretsDataUpdateName(OTelRequestSpan(req), secret);
-        } catch (e) {
-          if (isUniqueViolationError(e)) {
-            return res
-              .status(409)
-              .send({ error: "A secret with this name already exists" });
-          }
-          throw e;
+          return secretNameConflict(res);
         }
       }
+      secret.name = newName;
       if (hasData) {
         secret.data = Secret.normalizeData(body.data);
-        await SecretsDataUpdateData(OTelRequestSpan(req), secret);
+      }
+      let status;
+      try {
+        status = await SecretsDataUpdate(
+          OTelRequestSpan(req),
+          secret,
+          version,
+        );
+      } catch (e) {
+        if (isUniqueViolationError(e)) {
+          return secretNameConflict(res);
+        }
+        throw e;
+      }
+      if (status === "not_found") {
+        return res.status(404).send({ error: "Secret Not Found" });
+      }
+      if (status === "version_conflict") {
+        return res.status(409).send({
+          error:
+            "Secret was modified by another user: reload and re-apply your changes",
+          code: "SECRET_VERSION_CONFLICT",
+        });
+      }
+      await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
+      setSecretResponseHeaders(res);
+      return res.status(200).send({ secret: secret.toJson() });
+    });
+
+    // Partial update of a single key: never replaces the rest of the map, so
+    // copying a key cannot overwrite keys changed by another user.
+    fastify.put<{
+      Params: { id: string; secretId: string };
+      Body: {
+        key?: unknown;
+        value?: unknown;
+        version?: unknown;
+      };
+    }>("/:id/secrets/:secretId/keys", async (req, res) => {
+      if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
+        return;
+      }
+      const secret = await SecretsDataGet(
+        OTelRequestSpan(req),
+        req.params.secretId,
+      );
+      if (!secret || secret.projectId !== req.params.id) {
+        return res.status(404).send({ error: "Secret Not Found" });
+      }
+      const body = req.body || ({} as Record<string, unknown>);
+      const key = typeof body.key === "string" ? body.key.trim() : "";
+      if (key.length === 0) {
+        return res
+          .status(400)
+          .send({ error: "Invalid secret: key is required" });
+      }
+      const value = body.value;
+      if (
+        typeof value !== "string" &&
+        typeof value !== "number" &&
+        typeof value !== "boolean"
+      ) {
+        return res
+          .status(400)
+          .send({ error: `Invalid secret: value for key '${key}' must be a scalar` });
+      }
+      const version = parseVersion(body.version);
+      if (version === null) {
+        return res.status(400).send({
+          error: "Invalid secret: version is required (read the secret again)",
+        });
+      }
+      secret.data = { ...secret.data, [key]: String(value) };
+      let status;
+      try {
+        status = await SecretsDataUpdate(
+          OTelRequestSpan(req),
+          secret,
+          version,
+        );
+      } catch (e) {
+        if (isUniqueViolationError(e)) {
+          return secretNameConflict(res);
+        }
+        throw e;
+      }
+      if (status === "not_found") {
+        return res.status(404).send({ error: "Secret Not Found" });
+      }
+      if (status === "version_conflict") {
+        return res.status(409).send({
+          error:
+            "Secret was modified by another user: reload and re-apply your changes",
+          code: "SECRET_VERSION_CONFLICT",
+        });
       }
       await SecretsHashRefreshForProject(OTelRequestSpan(req), req.params.id);
       setSecretResponseHeaders(res);
@@ -203,4 +297,17 @@ export class SecretsRoutes {
       },
     );
   }
+}
+
+function parseVersion(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1
+    ? value
+    : null;
+}
+
+function secretNameConflict(res: any) {
+  return res.status(409).send({
+    error: "A secret with this name already exists",
+    code: "SECRET_NAME_CONFLICT",
+  });
 }

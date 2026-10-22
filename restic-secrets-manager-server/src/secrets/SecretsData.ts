@@ -90,29 +90,41 @@ export async function SecretsDataAdd(
     JSON.stringify(secret.data),
     secret.dateCreated,
     secret.dateUpdated,
+    secret.version,
   ]);
 }
 
-export async function SecretsDataUpdateData(
-  context: Span | undefined,
-  secret: Secret,
-): Promise<void> {
-  await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_DATA, [
-    JSON.stringify(secret.data),
-    new Date().toISOString(),
-    secret.id,
-  ]);
-}
+export type SecretsUpdateStatus = "updated" | "not_found" | "version_conflict";
 
-export async function SecretsDataUpdateName(
+/**
+ * Atomically updates a secret name and data, guarded by the expected
+ * version. One conditional statement makes the rename and the data write
+ * indivisible; a stale version changes nothing and reports a conflict.
+ */
+export async function SecretsDataUpdate(
   context: Span | undefined,
   secret: Secret,
-): Promise<void> {
-  await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_NAME, [
+  expectedVersion: number,
+): Promise<SecretsUpdateStatus> {
+  const dateUpdated = new Date().toISOString();
+  const affected = await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_SECRET, [
     secret.name,
-    new Date().toISOString(),
+    JSON.stringify(secret.data),
+    dateUpdated,
     secret.id,
+    secret.projectId,
+    expectedVersion,
   ]);
+  if (affected === 1) {
+    secret.dateUpdated = dateUpdated;
+    secret.version = expectedVersion + 1;
+    return "updated";
+  }
+  const current = await SecretsDataGet(context, secret.id);
+  if (!current || current.projectId !== secret.projectId) {
+    return "not_found";
+  }
+  return "version_conflict";
 }
 
 export async function SecretsDataDelete(
@@ -120,13 +132,6 @@ export async function SecretsDataDelete(
   id: string,
 ): Promise<void> {
   await DbUtilsExecSQL(context, SQL_QUERIES.DELETE_SECRET, [id]);
-}
-
-export async function SecretsDataDeleteByProjectId(
-  context: Span | undefined,
-  projectId: string,
-): Promise<void> {
-  await DbUtilsExecSQL(context, SQL_QUERIES.DELETE_BY_PROJECT, [projectId]);
 }
 
 /**
@@ -184,6 +189,7 @@ function insertParams(secret: Secret): unknown[] {
     JSON.stringify(secret.data),
     secret.dateCreated,
     secret.dateUpdated,
+    secret.version,
   ];
 }
 
@@ -200,11 +206,9 @@ const SQL_QUERIES = {
     'SELECT COUNT(*) AS count FROM secrets WHERE "projectId" = ?',
   COUNT_ALL: 'SELECT "projectId", COUNT(*) AS count FROM secrets GROUP BY "projectId"',
   INSERT_SECRET:
-    'INSERT INTO secrets ("id", "projectId", "name", "data", "dateCreated", "dateUpdated") VALUES (?, ?, ?, ?, ?, ?)',
-  UPDATE_DATA:
-    'UPDATE secrets SET "data" = ?, "dateUpdated" = ? WHERE "id" = ?',
-  UPDATE_NAME:
-    'UPDATE secrets SET "name" = ?, "dateUpdated" = ? WHERE "id" = ?',
+    'INSERT INTO secrets ("id", "projectId", "name", "data", "dateCreated", "dateUpdated", "version") VALUES (?, ?, ?, ?, ?, ?, ?)',
+  UPDATE_SECRET:
+    'UPDATE secrets SET "name" = ?, "data" = ?, "dateUpdated" = ?, "version" = "version" + 1 WHERE "id" = ? AND "projectId" = ? AND "version" = ?',
   DELETE_SECRET: 'DELETE FROM secrets WHERE "id" = ?',
   DELETE_BY_PROJECT: 'DELETE FROM secrets WHERE "projectId" = ?',
 };

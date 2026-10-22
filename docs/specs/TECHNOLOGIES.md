@@ -7,10 +7,11 @@
 - `@devopsplaybook.io/common-utils` (config, database facade, authentication, users management, OTel context)
 - `@fastify/rate-limit` (login and session-refresh throttling, `429` + `Retry-After`)
 - `@devopsplaybook.io/otel-utils-fastify` (OpenTelemetry request hooks)
-- SQLite via `better-sqlite3` (default) with optional PostgreSQL support; schema migrations include `users.tokenVersion` for session revocation
+- SQLite via `better-sqlite3` (default) with optional PostgreSQL support; schema migrations (database version 11) include `users.tokenVersion` for session revocation, `secrets.version` for optimistic concurrency and a cascading `secrets.projectId → projects.id` foreign key (SQLite foreign-key enforcement is enabled after the migrations)
+- Secret updates use a single conditional `UPDATE ... WHERE version = ?` (version incremented in the same statement), which is atomic on both database types
 - `restic` CLI invoked for pull/push operations against S3-compatible repositories, through a `spawn` runner with per-operation timeouts, SIGTERM→SIGKILL escalation and AbortSignal support for client disconnects
-- PostgreSQL advisory locks (via the common-utils database facade) serializing synchronization operations per project across replicas; SQLite deployments stay single-replica
-- Jest + ts-jest for unit tests, ESLint (typescript-eslint) for linting
+- PostgreSQL advisory locks (via the common-utils database facade) serializing synchronization operations per project across replicas and project creation/name-target checks; SQLite deployments stay single-replica
+- Jest with `@swc/jest` and `oxlint` for unit tests and linting on the server
 
 ## Web
 
@@ -19,6 +20,7 @@
 - Pico CSS + Bootstrap Icons
 - `@vite-pwa/nuxt` for PWA support
 - Axios for API calls, `jwt-decode` for token inspection
+- Vitest for unit tests (page logic extracted into tested utilities), ESLint (typescript-eslint) for linting
 - CSS Grid preferred for layout
 
 ## Proxy (dev only)

@@ -7,6 +7,7 @@ import {
   takeSecretDraftForUser,
   type SecretDraft,
 } from "./secret-draft";
+import { isFormDirty, persistedFormBaseline } from "./secret-edit";
 
 function sampleDraft(overrides: Partial<SecretDraft> = {}): SecretDraft {
   return {
@@ -108,5 +109,34 @@ describe("secret draft user binding", () => {
 
   it("should return null without a stored draft", () => {
     expect(takeSecretDraftForUser("user-1")).toBeNull();
+  });
+});
+
+describe("expiry -> restore -> close flow (L7)", () => {
+  it("should not offer an expired draft: there is nothing to restore", () => {
+    saveSecretDraft(
+      sampleDraft({
+        savedAt: new Date(Date.now() - SECRET_DRAFT_TTL_MS - 60_000).toISOString(),
+      }),
+    );
+    expect(takeSecretDraftForUser("user-1")).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should restore a valid draft as an unsaved edit so closing asks for confirmation", () => {
+    saveSecretDraft(sampleDraft());
+    const draft = takeSecretDraftForUser("user-1");
+    expect(draft).not.toBeNull();
+    const form = {
+      name: draft!.name,
+      rows: draft!.rows.map((row) => ({ key: row.key, value: row.value })),
+    };
+    // The persisted secret differs from the restored draft
+    const persisted = {
+      name: "api-keys",
+      data: { TOKEN: "saved-value", CERT: "saved-cert" },
+    };
+    expect(isFormDirty(form, persistedFormBaseline(persisted))).toBe(true);
+    // Closing the editor now goes through the unsaved-changes confirmation
   });
 });

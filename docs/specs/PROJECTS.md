@@ -20,13 +20,20 @@ Each project is defined with the settings required to connect to a restic reposi
 ## Lifecycle
 
 - [x] Projects can be created by admins
+- [x] Project names are unique; creation answers HTTP 409 `PROJECT_NAME_CONFLICT` for a duplicate
+- [x] A project cannot reuse the repository target (normalized endpoint, bucket and prefix) of another project: creation answers HTTP 409 `PROJECT_TARGET_CONFLICT` naming the existing project. Names that slugify to the same default prefix (`My App` / `my-app`) therefore collide
+- [x] Name and repository-target uniqueness are checked under a cross-replica creation lock, so concurrent creations cannot both claim a target
+- [x] Existing projects are never modified: their stored prefix and repository URL are unchanged by these rules
 - [x] Projects can be deleted by admins (deleting also deletes the project secrets from the application database; the restic repository is left untouched)
+- [x] Project deletion and the deletion of all its secrets run in one database transaction: a failed deletion leaves the project and its secrets intact. A `ON DELETE CASCADE` foreign key backs the guarantee (enforced on SQLite too) and the migration removes legacy orphan secrets
+- [x] Deleting a project also removes its access scope from the stored user records (best effort: a failed prune never fails the completed deletion)
 - [x] Projects can never be updated: settings are immutable after creation
 
 ## Setup confidence
 
 - [x] The create-project dialog offers a read-only "Test connection" action: it validates the S3 endpoint, bucket and credentials and the restic password by invoking restic without writing to the repository
 - [x] The connection test reports "repository is empty (it will be initialized on the first push)" when the repository does not exist yet, "N snapshots found" when it is reachable, or a clear error message when the credentials or the endpoint are wrong
+- [x] The connection test also returns non-blocking warnings: the normalized repository target is already used by another project, and the repository already contains snapshots that cannot be correlated with the project (likely a wrong prefix)
 - [x] The connection test is limited in time so an unreachable endpoint cannot hang the dialog indefinitely
 - [x] Before creation, a confirmation summary step shows the settings that were entered (secret key and restic password masked) and warns that the settings cannot be changed after creation
 - [x] Project settings remain immutable: a mistake is corrected by deleting and re-creating the project, which the test and review steps aim to make rare

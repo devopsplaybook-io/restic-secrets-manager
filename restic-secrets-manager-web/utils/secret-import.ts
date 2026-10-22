@@ -1,3 +1,5 @@
+import { ENV_KEY_PATTERN, isEnvSafeKey } from "./secret-keys";
+
 export interface SecretImportRow {
   key: string;
   value: string;
@@ -59,7 +61,7 @@ function parseEnvImport(text: string): SecretImportResult {
   const rows: SecretImportRow[] = [];
   const warnings: string[] = [];
   const byKey = new Map<string, SecretImportRow>();
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r\n|\n|\r/);
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const line = rawLine.trim();
@@ -76,6 +78,11 @@ function parseEnvImport(text: string): SecretImportResult {
     const key = withoutExport.slice(0, eq).trim();
     if (key.length === 0) {
       throw new Error(`Invalid .env line ${i + 1}: the key is empty`);
+    }
+    if (!isEnvSafeKey(key)) {
+      throw new Error(
+        `Invalid .env line ${i + 1}: invalid key ${JSON.stringify(key)} (keys must match ${ENV_KEY_PATTERN.source})`,
+      );
     }
     let value = withoutExport.slice(eq + 1).trim();
     if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) {
@@ -101,16 +108,23 @@ function parseEnvImport(text: string): SecretImportResult {
 
 // Single pass so that an escaped backslash never turns into an escape prefix
 function unescapeDoubleQuoted(value: string): string {
-  return value.replace(/\\(.)/g, (match, ch: string) => {
-    switch (ch) {
+  return value.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (match, ch: string) => {
+    switch (ch[0]) {
       case "n":
         return "\n";
+      case "r":
+        return "\r";
       case "t":
         return "\t";
       case '"':
         return '"';
       case "\\":
         return "\\";
+      case "u":
+        if (/^u[0-9a-fA-F]{4}$/.test(ch)) {
+          return String.fromCharCode(parseInt(ch.slice(1), 16));
+        }
+        return match;
       default:
         return match;
     }

@@ -4,6 +4,18 @@ function isNonEmptyString(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function normalizeEndpoint(value: string): string {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+}
+
+function trimSlashes(value: string): string {
+  return value.trim().replace(/^\/+|\/+$/g, "");
+}
+
 export class Project {
   public static fromJson(json: Record<string, unknown>): Project | null {
     if (!json) {
@@ -88,6 +100,17 @@ export class Project {
     if (!isNonEmptyString(json.resticPassword)) {
       errors.push("Invalid project: resticPassword is required");
     }
+    if (isNonEmptyString(json.name)) {
+      const candidate = new Project();
+      candidate.name = json.name as string;
+      candidate.repoPrefix =
+        typeof json.repoPrefix === "string" ? json.repoPrefix : "";
+      if (candidate.repoTarget().repoPrefix.length === 0) {
+        errors.push(
+          "Invalid project: repository prefix is required (the name produces an empty default prefix)",
+        );
+      }
+    }
     return errors;
   }
 
@@ -105,6 +128,31 @@ export class Project {
   /** Restic repository URL for the S3-compatible backend. */
   public repositoryUrl(): string {
     return `s3:https://${this.s3Endpoint}/${this.s3Bucket}/${this.effectiveRepoPrefix()}`;
+  }
+
+  /**
+   * Normalized repository target: endpoint, bucket and effective prefix as
+   * compared across projects. The endpoint is case-insensitive and may be
+   * written with a scheme or a trailing slash; the bucket is
+   * case-insensitive; the prefix is compared exactly (minus surrounding
+   * slashes). Never used to change the effective prefix of a project.
+   */
+  public repoTarget(): {
+    s3Endpoint: string;
+    s3Bucket: string;
+    repoPrefix: string;
+  } {
+    return {
+      s3Endpoint: normalizeEndpoint(this.s3Endpoint),
+      s3Bucket: (this.s3Bucket || "").trim().toLowerCase(),
+      repoPrefix: trimSlashes(this.effectiveRepoPrefix()),
+    };
+  }
+
+  /** Stable key identifying the normalized repository target. */
+  public repoTargetKey(): string {
+    const target = this.repoTarget();
+    return [target.s3Endpoint, target.s3Bucket, target.repoPrefix].join("\n");
   }
 
   public static slugify(name: string): string {

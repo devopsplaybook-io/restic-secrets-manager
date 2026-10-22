@@ -1,12 +1,13 @@
 import { AuthMustBeAdmin } from "@devopsplaybook.io/common-utils";
 import { FastifyInstance } from "fastify";
 import { Project } from "../model/Project";
-import { OTelRequestSpan } from "../OTelContext";
+import { OTelLogger, OTelRequestSpan } from "../OTelContext";
 import {
   ProjectsDataGet,
   ProjectsDataGetByName,
+  ProjectsDataGetByRepoTarget,
   ProjectsDataAdd,
-  ProjectsDataDelete,
+  ProjectsDataDeleteCascade,
   ProjectsDataList,
 } from "./ProjectsData";
 import {
@@ -17,7 +18,6 @@ import {
 import {
   SecretsDataCountForProject,
   SecretsDataCountsAll,
-  SecretsDataDeleteByProjectId,
 } from "../secrets/SecretsData";
 import {
   ProjectAccessCanAccessMany,
@@ -49,6 +49,9 @@ import {
 import { RequestAbortSignal } from "../restic/RequestAbort";
 import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 import { Config } from "../Config";
+import { DbUtilsWithLock } from "../utils-std-ts/DbUtils";
+
+const logger = OTelLogger().createModuleLogger("projects");
 
 export class ProjectsRoutes {
   //
@@ -127,17 +130,41 @@ export class ProjectsRoutes {
       if (errors.length > 0) {
         return res.status(400).send({ error: errors.join(" ") });
       }
-      if (
-        await ProjectsDataGetByName(OTelRequestSpan(req), body.name as string)
-      ) {
-        return res
-          .status(409)
-          .send({ error: "A project with this name already exists" });
-      }
       const project = Project.fromJson(body) as Project;
-      await ProjectsDataAdd(OTelRequestSpan(req), project);
+      const span = OTelRequestSpan(req);
+      // Serialized across replicas: two concurrent creations can never
+      // claim the same name or repository target.
+      const outcome = await DbUtilsWithLock("project_create", async () => {
+        if (await ProjectsDataGetByName(span, project.name)) {
+          return { conflict: "name" as const };
+        }
+        const existingTarget = await ProjectsDataGetByRepoTarget(
+          span,
+          project.repoTargetKey(),
+        );
+        if (existingTarget) {
+          return {
+            conflict: "target" as const,
+            existingName: existingTarget.name,
+          };
+        }
+        await ProjectsDataAdd(span, project);
+        return { conflict: null };
+      });
+      if (outcome.conflict === "name") {
+        return res.status(409).send({
+          error: "A project with this name already exists",
+          code: "PROJECT_NAME_CONFLICT",
+        });
+      }
+      if (outcome.conflict === "target") {
+        return res.status(409).send({
+          error: `A project already uses this repository target (project '${outcome.existingName}'). Change the repository prefix.`,
+          code: "PROJECT_TARGET_CONFLICT",
+        });
+      }
       ProjectScopesAdd(project.id);
-      await SecretsHashRefreshForProject(OTelRequestSpan(req), project.id);
+      await SecretsHashRefreshForProject(span, project.id);
       return res.status(201).send({ project: project.toTransportJson() });
     });
 
@@ -162,7 +189,23 @@ export class ProjectsRoutes {
           config,
           RequestAbortSignal(req.raw, res.raw),
         );
-        return res.status(200).send({ result });
+        const span = OTelRequestSpan(req);
+        const warnings: string[] = [];
+        const existingTarget = await ProjectsDataGetByRepoTarget(
+          span,
+          project.repoTargetKey(),
+        );
+        if (existingTarget) {
+          warnings.push(
+            `This repository target is already used by project '${existingTarget.name}'.`,
+          );
+        }
+        if (result.status === "ok" && (result.snapshotCount ?? 0) > 0) {
+          warnings.push(
+            `Repository already contains ${result.snapshotCount} snapshot(s) that cannot be correlated with this project; verify the prefix before creating it.`,
+          );
+        }
+        return res.status(200).send({ result: { ...result, warnings } });
       },
     );
 
@@ -210,11 +253,20 @@ export class ProjectsRoutes {
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      await SecretsDataDeleteByProjectId(span, project.id);
-      await ProjectsDataDelete(span, project.id);
+      await ProjectsDataDeleteCascade(span, project.id);
       ProjectScopesRemove(project.id);
-      await ProjectScopesPruneFromUsers(span, project.id);
       SyncStatusCacheInvalidate(project.id);
+      try {
+        await ProjectScopesPruneFromUsers(span, project.id);
+      } catch (e) {
+        // The deletion is complete: a dangling scope is inert, so a failed
+        // prune must not turn it into a 500. Never log secret material.
+        logger.warn(
+          `Unable to prune the deleted project scope from users: ${
+            e instanceof Error ? e.message : "unknown error"
+          }`,
+        );
+      }
       return res.status(200).send({});
     });
 

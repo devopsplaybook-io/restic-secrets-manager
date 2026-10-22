@@ -171,6 +171,10 @@
           </div>
         </fieldset>
 
+        <div v-if="envWarning" class="warning-message">
+          <i class="bi bi-exclamation-triangle-fill"/> {{ envWarning }}
+        </div>
+
         <details v-if="!editingSecret" class="import-block">
           <summary><i class="bi bi-box-arrow-in-down"/> Import from .env or JSON</summary>
           <label>
@@ -383,8 +387,19 @@
 import api, { registerUnsavedEditsCapture } from "../../utils/api";
 import { copyTextToClipboardWithAutoClear } from "../../utils/clipboard";
 import { parseSecretImport } from "../../utils/secret-import";
-import { secretToEnvContent, secretToJsonContent } from "../../utils/secret-export";
+import { secretToJsonContent } from "../../utils/secret-export";
 import { saveSecretDraft } from "../../utils/secret-draft";
+import { buildSecretData, envKeyWarning, nonEnvSafeKeys } from "../../utils/secret-keys";
+import {
+  emptySecretForm,
+  formSnapshot,
+  isFormDirty,
+  isSecretNameConflict,
+  isSecretVersionConflict,
+  persistedFormBaseline,
+  secretToForm,
+} from "../../utils/secret-edit";
+import { extractApiErrorMessage } from "../../utils/api-error";
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
@@ -422,16 +437,23 @@ const copiedRows = ref(new Set());
 const savedSnapshot = ref("");
 
 function snapshotForm() {
-  return JSON.stringify({
-    name: secretForm.value.name,
-    rows: secretForm.value.rows,
-  });
+  return formSnapshot(secretForm.value);
 }
 
-const isDirty = computed(() => snapshotForm() !== savedSnapshot.value);
+const isDirty = computed(() => isFormDirty(secretForm.value, savedSnapshot.value));
+
+const envWarning = computed(() =>
+  envKeyWarning(
+    nonEnvSafeKeys(
+      secretForm.value.rows
+        .map((row) => row.key.trim())
+        .filter((key) => key.length > 0),
+    ),
+  ),
+);
 
 function resetFormEditorState() {
-  secretForm.value = { name: "", rows: [] };
+  secretForm.value = emptySecretForm();
   revealedRows.value = new Set();
   multilineRows.value = new Set();
   savedSnapshot.value = snapshotForm();
@@ -485,7 +507,7 @@ async function loadProject() {
     const res = await api.get(`/projects/${route.params.id}`);
     project.value = res.data.project;
   } catch (e) {
-    error.value = e.response?.data?.error || "Unable to load the project";
+    error.value = extractApiErrorMessage(e, "Unable to load the project");
   }
 }
 
@@ -494,7 +516,7 @@ async function loadSecrets() {
     const res = await api.get(`/projects/${route.params.id}/secrets`);
     secrets.value = res.data.secrets || [];
   } catch (e) {
-    error.value = e.response?.data?.error || "Unable to load secrets";
+    error.value = extractApiErrorMessage(e, "Unable to load secrets");
   }
 }
 
@@ -539,14 +561,30 @@ function onSecretAction(secret, action) {
 }
 
 async function copySecretAs(secret, format) {
-  const entries = Object.keys(secret.data).map((key) => ({
-    key,
-    value: secret.data[key],
-  }));
-  const content =
-    format === "env"
-      ? secretToEnvContent(entries)
-      : secretToJsonContent(entries);
+  let content;
+  if (format === "env") {
+    // The server owns the canonical .env escaping and key validation: it
+    // refuses (400) keys that a .env file cannot represent.
+    try {
+      const res = await api.get(
+        `/projects/${route.params.id}/secrets/by-name/${encodeURIComponent(secret.name)}/export?format=env`,
+        { responseType: "text" },
+      );
+      content = typeof res.data === "string" ? res.data : String(res.data ?? "");
+    } catch (e) {
+      error.value = extractApiErrorMessage(
+        e,
+        `Unable to copy the secret ${secret.name} as .env`,
+      );
+      return;
+    }
+  } else {
+    const entries = Object.keys(secret.data).map((key) => ({
+      key,
+      value: secret.data[key],
+    }));
+    content = secretToJsonContent(entries);
+  }
   const copied = await copyTextToClipboardWithAutoClear(content);
   if (!copied) {
     error.value =
@@ -568,7 +606,7 @@ function onKeyAction(index, action) {
 
 function openCreateSecret() {
   editingSecret.value = null;
-  secretForm.value = { name: "", rows: [{ key: "", value: "" }] };
+  secretForm.value = emptySecretForm();
   secretError.value = "";
   revealedRows.value = new Set();
   multilineRows.value = new Set();
@@ -581,10 +619,7 @@ function openCreateSecret() {
 
 function openEditSecret(secret) {
   editingSecret.value = secret;
-  secretForm.value = {
-    name: secret.name,
-    rows: Object.keys(secret.data).map((key) => ({ key, value: secret.data[key] })),
-  };
+  secretForm.value = secretToForm(secret);
   secretError.value = "";
   revealedRows.value = new Set();
   multilineRows.value = multilineIndices(secretForm.value.rows);
@@ -755,7 +790,9 @@ function restoreDraftEdits() {
   secretError.value = "";
   revealedRows.value = new Set();
   multilineRows.value = multilineIndices(secretForm.value.rows);
-  savedSnapshot.value = snapshotForm();
+  // Baseline = the persisted secret, never the draft itself: restored edits
+  // stay dirty and the unsaved-changes guard still protects them.
+  savedSnapshot.value = persistedFormBaseline(secret);
   secretModal.open();
 }
 
@@ -859,19 +896,10 @@ function importSecretRows() {
 }
 
 async function saveSecret() {
-  const data = {};
-  const seen = new Set();
-  for (const row of secretForm.value.rows) {
-    const key = row.key.trim();
-    if (key.length === 0) {
-      continue;
-    }
-    if (seen.has(key)) {
-      secretError.value = `Duplicate key '${key}': each key must appear only once`;
-      return;
-    }
-    seen.add(key);
-    data[key] = row.value;
+  const built = buildSecretData(secretForm.value.rows);
+  if (built.error) {
+    secretError.value = built.error;
+    return;
   }
   savingSecret.value = true;
   secretError.value = "";
@@ -879,22 +907,59 @@ async function saveSecret() {
     if (editingSecret.value) {
       await api.put(
         `/projects/${route.params.id}/secrets/${editingSecret.value.id}`,
-        { data },
+        { data: built.data, version: editingSecret.value.version },
       );
     } else {
       await api.post(`/projects/${route.params.id}/secrets`, {
         name: secretForm.value.name,
-        data,
+        data: built.data,
       });
     }
     closeSecretModal();
     authStore.clearPendingDraft();
     await loadSecrets();
   } catch (e) {
-    secretError.value = e.response?.data?.error || "Unable to save the secret";
+    if (editingSecret.value && isSecretVersionConflict(e)) {
+      await reloadAfterSaveConflict(editingSecret.value.id);
+      return;
+    }
+    if (editingSecret.value && e.response?.status === 404) {
+      await loadSecrets();
+      editingSecret.value = null;
+      savedSnapshot.value = persistedFormBaseline(null);
+      secretError.value =
+        "This secret no longer exists. Your changes are kept: save them to create a new secret.";
+      return;
+    }
+    if (!editingSecret.value && isSecretNameConflict(e)) {
+      secretError.value =
+        "A secret with this name already exists: choose another name.";
+      return;
+    }
+    secretError.value = extractApiErrorMessage(e, "Unable to save the secret");
   } finally {
     savingSecret.value = false;
   }
+}
+
+// A stale version means another user saved this secret since it was opened:
+// keep the editor content, move the baseline to the persisted version and
+// let the user review the changes before saving again.
+async function reloadAfterSaveConflict(secretId) {
+  await loadSecrets();
+  const latest = secrets.value.find((item) => item.id === secretId) ?? null;
+  if (!latest) {
+    editingSecret.value = null;
+    savedSnapshot.value = persistedFormBaseline(null);
+    secretError.value =
+      "This secret was deleted by another user. Your changes are kept: save them to create a new secret.";
+    return;
+  }
+  editingSecret.value = latest;
+  secretForm.value.name = latest.name;
+  savedSnapshot.value = persistedFormBaseline(latest);
+  secretError.value =
+    "This secret was modified by another user. Your changes are kept: review them and save again.";
 }
 
 // Delete
@@ -918,7 +983,7 @@ async function executeDelete() {
     deleteModal.close();
     await loadSecrets();
   } catch (e) {
-    error.value = e.response?.data?.error || "Unable to delete the secret";
+    error.value = extractApiErrorMessage(e, "Unable to delete the secret");
     deleteModal.close();
   } finally {
     deleting.value = false;
@@ -957,8 +1022,10 @@ async function executeDuplicate() {
     duplicateModal.close();
     await loadSecrets();
   } catch (e) {
-    duplicateError.value =
-      e.response?.data?.error || "Unable to duplicate the secret";
+    duplicateError.value = extractApiErrorMessage(
+      e,
+      "Unable to duplicate the secret",
+    );
   } finally {
     duplicating.value = false;
   }
@@ -986,18 +1053,42 @@ function onRenameModalClosed() {
 }
 
 async function executeRename() {
+  if (!renameTarget.value) {
+    return;
+  }
   renaming.value = true;
   renameError.value = "";
   try {
-    await api.put(
-      `/projects/${route.params.id}/secrets/${renameTarget.value.id}`,
-      { name: renameName.value },
-    );
-    renameModal.close();
-    await loadSecrets();
-  } catch (e) {
-    renameError.value =
-      e.response?.data?.error || "Unable to rename the secret";
+    let target = renameTarget.value;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await api.put(`/projects/${route.params.id}/secrets/${target.id}`, {
+          name: renameName.value,
+          version: target.version,
+        });
+        renameModal.close();
+        await loadSecrets();
+        return;
+      } catch (e) {
+        if (attempt === 1 && isSecretVersionConflict(e)) {
+          await loadSecrets();
+          const latest =
+            secrets.value.find((item) => item.id === target.id) ?? null;
+          if (latest) {
+            target = latest;
+            renameTarget.value = latest;
+            continue;
+          }
+          renameError.value = "This secret no longer exists.";
+          return;
+        }
+        renameError.value = extractApiErrorMessage(
+          e,
+          "Unable to rename the secret",
+        );
+        return;
+      }
+    }
   } finally {
     renaming.value = false;
   }
@@ -1062,7 +1153,7 @@ async function executeCopyKey() {
     copyKeyError.value = "The target key name is required";
     return;
   }
-  const target = copyTargetSecret.value;
+  let target = copyTargetSecret.value;
   if (!target) {
     copyKeyError.value = "The target secret could not be found";
     return;
@@ -1070,13 +1161,40 @@ async function executeCopyKey() {
   copying.value = true;
   copyKeyError.value = "";
   try {
-    await api.put(`/projects/${route.params.id}/secrets/${target.id}`, {
-      data: { ...target.data, [targetKey]: copyKeySource.value.value },
-    });
-    copyKeyModal.close();
-    await loadSecrets();
-  } catch (e) {
-    copyKeyError.value = e.response?.data?.error || "Unable to copy the key";
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        // Partial key update: keys changed by another user in the meantime
+        // are never overwritten.
+        await api.put(
+          `/projects/${route.params.id}/secrets/${target.id}/keys`,
+          {
+            key: targetKey,
+            value: copyKeySource.value.value,
+            version: target.version,
+          },
+        );
+        copyKeyModal.close();
+        await loadSecrets();
+        return;
+      } catch (e) {
+        if (attempt === 1 && isSecretVersionConflict(e)) {
+          await loadSecrets();
+          const latest =
+            secrets.value.find((item) => item.id === target.id) ?? null;
+          if (latest) {
+            target = latest;
+            continue;
+          }
+          copyKeyError.value = "The target secret no longer exists.";
+          return;
+        }
+        copyKeyError.value = extractApiErrorMessage(
+          e,
+          "Unable to copy the key",
+        );
+        return;
+      }
+    }
   } finally {
     copying.value = false;
   }

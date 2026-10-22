@@ -165,3 +165,52 @@ describe("Secret fromJson", () => {
     expect(secret.dateUpdated).toBe("2026-01-03T03:04:05.000Z");
   });
 });
+
+describe("Secret version", () => {
+  it("should default to 1", () => {
+    expect(new Secret().version).toBe(1);
+    expect(
+      (Secret.fromJson({ projectId: "p1", name: "n", data: {} }) as Secret)
+        .version,
+    ).toBe(1);
+  });
+
+  it("should read numeric and string versions", () => {
+    expect(
+      (Secret.fromJson({ projectId: "p1", name: "n", version: 7 }) as Secret)
+        .version,
+    ).toBe(7);
+    expect(
+      (Secret.fromJson({ projectId: "p1", name: "n", version: "4" }) as Secret)
+        .version,
+    ).toBe(4);
+  });
+
+  it("should fall back to 1 for malformed versions", () => {
+    for (const version of [0, -3, 2.5, "abc", null, {}]) {
+      expect(
+        (Secret.fromJson({ projectId: "p1", name: "n", version }) as Secret)
+          .version,
+      ).toBe(1);
+    }
+  });
+
+  it("should include the version in every JSON form", () => {
+    const secret = Secret.fromJson({
+      projectId: "p1",
+      name: "n",
+      version: 3,
+    }) as Secret;
+    expect(secret.toJson().version).toBe(3);
+    expect(secret.toTransportJson().version).toBe(3);
+  });
+
+  it("should round-trip through fromJson and toJson", () => {
+    const secret = new Secret();
+    secret.projectId = "p1";
+    secret.name = "n";
+    secret.version = 5;
+    const restored = Secret.fromJson(secret.toJson()) as Secret;
+    expect(restored.version).toBe(5);
+  });
+});

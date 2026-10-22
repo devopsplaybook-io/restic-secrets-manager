@@ -22,17 +22,29 @@ jest.mock("../Config", () => ({
 
 jest.mock("./ProjectsData", () => ({
   ProjectsDataAdd: jest.fn(),
-  ProjectsDataDelete: jest.fn(),
+  ProjectsDataDeleteCascade: jest.fn(),
   ProjectsDataGet: jest.fn(),
   ProjectsDataGetByName: jest.fn(),
+  ProjectsDataGetByRepoTarget: jest.fn(),
   ProjectsDataList: jest.fn(),
 }));
 
 jest.mock("../secrets/SecretsData", () => ({
   SecretsDataCountForProject: jest.fn(),
   SecretsDataCountsAll: jest.fn(),
-  SecretsDataDeleteByProjectId: jest.fn(),
   SecretsDataListForProject: jest.fn(),
+}));
+
+jest.mock("../secrets/SecretsHash", () => ({
+  ...jest.requireActual("../secrets/SecretsHash"),
+  SecretsHashRefreshForProject: jest.fn(),
+}));
+
+jest.mock("../utils-std-ts/DbUtils", () => ({
+  ...jest.requireActual("../utils-std-ts/DbUtils"),
+  DbUtilsWithLock: jest.fn(
+    async (_key: string, fn: () => Promise<unknown>) => fn(),
+  ),
 }));
 
 jest.mock("./ProjectScopes", () => ({
@@ -74,16 +86,18 @@ import {
 } from "../users/ProjectAccess";
 import {
   ProjectsDataAdd,
-  ProjectsDataDelete,
+  ProjectsDataDeleteCascade,
   ProjectsDataGet,
+  ProjectsDataGetByName,
+  ProjectsDataGetByRepoTarget,
   ProjectsDataList,
 } from "./ProjectsData";
 import {
   SecretsDataCountForProject,
   SecretsDataCountsAll,
-  SecretsDataDeleteByProjectId,
   SecretsDataListForProject,
 } from "../secrets/SecretsData";
+import { DbUtilsWithLock } from "../utils-std-ts/DbUtils";
 import {
   ProjectScopesAdd,
   ProjectScopesPruneFromUsers,
@@ -115,10 +129,12 @@ const accessManyMock = ProjectAccessCanAccessMany as jest.Mock;
 const dataListMock = ProjectsDataList as jest.Mock;
 const dataAddMock = ProjectsDataAdd as jest.Mock;
 const dataGetMock = ProjectsDataGet as jest.Mock;
-const dataDeleteMock = ProjectsDataDelete as jest.Mock;
+const dataGetByNameMock = ProjectsDataGetByName as jest.Mock;
+const dataGetByTargetMock = ProjectsDataGetByRepoTarget as jest.Mock;
+const dataDeleteMock = ProjectsDataDeleteCascade as jest.Mock;
+const withLockMock = DbUtilsWithLock as jest.Mock;
 const countsAllMock = SecretsDataCountsAll as jest.Mock;
 const countForProjectMock = SecretsDataCountForProject as jest.Mock;
-const secretsDeleteByProjectMock = SecretsDataDeleteByProjectId as jest.Mock;
 const secretsListMock = SecretsDataListForProject as jest.Mock;
 const scopesPruneMock = ProjectScopesPruneFromUsers as jest.Mock;
 const scopesRemoveMock = ProjectScopesRemove as jest.Mock;
@@ -285,17 +301,38 @@ describe("GET /:id", () => {
 });
 
 describe("DELETE /:id", () => {
-  it("should delete the project, prune its scopes and invalidate the status cache", async () => {
+  it("should delete the project transactionally, prune its scopes and invalidate the status cache", async () => {
     dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
 
     const res = await fastify.inject({ method: "DELETE", url: "/p1" });
 
     expect(res.statusCode).toBe(200);
-    expect(secretsDeleteByProjectMock).toHaveBeenCalled();
+    expect(dataDeleteMock).toHaveBeenCalledTimes(1);
     expect(dataDeleteMock).toHaveBeenCalledWith(undefined, "p1");
     expect(scopesRemoveMock).toHaveBeenCalledWith("p1");
     expect(scopesPruneMock).toHaveBeenCalledWith(undefined, "p1");
     expect(cacheInvalidateMock).toHaveBeenCalledWith("p1");
+  });
+
+  it("should keep the 200 when pruning the scope from users fails", async () => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    scopesPruneMock.mockRejectedValue(new Error("users are read-only"));
+
+    const res = await fastify.inject({ method: "DELETE", url: "/p1" });
+
+    expect(res.statusCode).toBe(200);
+    expect(dataDeleteMock).toHaveBeenCalledWith(undefined, "p1");
+    expect(scopesRemoveMock).toHaveBeenCalledWith("p1");
+    expect(cacheInvalidateMock).toHaveBeenCalledWith("p1");
+  });
+
+  it("should not delete anything when the project does not exist", async () => {
+    dataGetMock.mockResolvedValue(null);
+
+    const res = await fastify.inject({ method: "DELETE", url: "/nope" });
+
+    expect(res.statusCode).toBe(404);
+    expect(dataDeleteMock).not.toHaveBeenCalled();
   });
 
   it("should return 403 when the caller is not an admin", async () => {
@@ -306,6 +343,89 @@ describe("DELETE /:id", () => {
     const res = await fastify.inject({ method: "DELETE", url: "/p1" });
     expect(res.statusCode).toBe(403);
     expect(dataGetMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /", () => {
+  const body = {
+    name: "New Project",
+    s3Endpoint: "s3.example.com",
+    s3Bucket: "bucket",
+    s3AccessKeyId: "access-key",
+    s3SecretAccessKey: "secret-key",
+    resticPassword: "restic-password",
+  };
+
+  it("should create the project under the creation lock when the name and target are free", async () => {
+    dataGetByNameMock.mockResolvedValue(null);
+    dataGetByTargetMock.mockResolvedValue(null);
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/",
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(withLockMock).toHaveBeenCalledWith(
+      "project_create",
+      expect.any(Function),
+    );
+    expect(dataAddMock).toHaveBeenCalledTimes(1);
+    expect(scopesAddMock).toHaveBeenCalledTimes(1);
+    expect(res.json().project.name).toBe("New Project");
+  });
+
+  it("should reject a duplicate name with 409 PROJECT_NAME_CONFLICT", async () => {
+    dataGetByNameMock.mockResolvedValue(projectFixture({ id: "p9" }));
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/",
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("PROJECT_NAME_CONFLICT");
+    expect(dataAddMock).not.toHaveBeenCalled();
+  });
+
+  it("should reject a duplicate repository target with 409 PROJECT_TARGET_CONFLICT", async () => {
+    dataGetByNameMock.mockResolvedValue(null);
+    dataGetByTargetMock.mockResolvedValue(
+      projectFixture({ id: "p9", name: "Existing Project" }),
+    );
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/",
+      payload: { ...body, name: "My App" },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("PROJECT_TARGET_CONFLICT");
+    expect(res.json().error).toContain("Existing Project");
+    expect(dataAddMock).not.toHaveBeenCalled();
+    expect(scopesAddMock).not.toHaveBeenCalled();
+  });
+
+  it("should check the normalized repository target, not only the name", async () => {
+    dataGetByNameMock.mockResolvedValue(null);
+    dataGetByTargetMock.mockResolvedValue(null);
+
+    await fastify.inject({
+      method: "POST",
+      url: "/",
+      payload: {
+        ...body,
+        name: "My App",
+        s3Endpoint: "https://S3.Example.com/",
+        s3Bucket: "Bucket",
+      },
+    });
+
+    const targetKey = dataGetByTargetMock.mock.calls[0][1] as string;
+    expect(targetKey).toBe("s3.example.com\nbucket\nmy-app");
   });
 });
 
@@ -333,11 +453,46 @@ describe("POST /test-connection", () => {
     expect(res.json().result).toEqual({
       status: "empty",
       message: "Repository is empty: it will be initialized on the first push",
+      warnings: [],
     });
     // The tested settings are the ones that would be created
     const tested = syncTestConnectionMock.mock.calls[0][0] as Project;
     expect(tested.name).toBe("New Project");
     expect(tested.repositoryUrl()).toBe("s3:https://s3.example.com/bucket/new-project");
+  });
+
+  it("should warn when the repository target is already used by another project", async () => {
+    dataGetByTargetMock.mockResolvedValue(
+      projectFixture({ id: "p9", name: "Existing Project" }),
+    );
+    syncTestConnectionMock.mockResolvedValue({ status: "empty" });
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/test-connection",
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result.warnings).toEqual([
+      "This repository target is already used by project 'Existing Project'.",
+    ]);
+  });
+
+  it("should warn when the repository already contains uncorrelated snapshots", async () => {
+    dataGetByTargetMock.mockResolvedValue(null);
+    syncTestConnectionMock.mockResolvedValue({ status: "ok", snapshotCount: 3 });
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/test-connection",
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result.warnings).toEqual([
+      "Repository already contains 3 snapshot(s) that cannot be correlated with this project; verify the prefix before creating it.",
+    ]);
   });
 
   it("should not persist anything", async () => {

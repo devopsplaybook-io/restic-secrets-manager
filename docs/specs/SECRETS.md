@@ -10,6 +10,9 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Secret values are masked by default in the UI, with a reveal toggle
 - [x] Editing a secret allows updating, adding and removing key/value entries
 - [x] Duplicate keys are rejected with an error when saving a secret
+- [x] Secret updates are atomic: a rename and the data changes are applied in one conditional database update, and reads expose a numeric `version` that updates must echo. A stale version is rejected with HTTP 409 (`SECRET_VERSION_CONFLICT`) and never overwrites a concurrent save
+- [x] The web editor handles a stale version by reloading the secret, keeping the unsaved edits and asking to review and save again; when the secret was deleted meanwhile, the kept edits are saved as a new secret
+- [x] Copying a key to another secret uses a dedicated partial update that changes only that key (with its own version check), so keys modified by another user are never overwritten
 - [x] A secret can be duplicated with all its key/value entries under a new name (prefilled with `<name>-copy`)
 - [x] A secret can be renamed; the new name follows the creation rules and must be unique within the project (validation and conflict errors shown inline)
 - [x] A key/value entry can be copied to another secret of the same project, the target secret and key name being chosen in a dialog (an existing target key is overwritten after an explicit warning)
@@ -69,6 +72,9 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 ## Programmatic access
 
 - [x] A secret can be exported by name through a read-only API endpoint returning a .env file (default) or JSON (`?format=json`); project access is required
+- [x] The .env export is produced by a single canonical serializer: values that the format would alter (empty, spaces, `=`, `#`, quotes, backslashes, CR, LF, tab and other control characters) are double-quoted with `\\`, `\"`, `\n`, `\r`, `\t` and `\uXXXX` escapes; Unicode passes through unchanged and a .env import restores the exact value
+- [x] Keys that are not valid environment variable names (`[A-Za-z_][A-Za-z0-9_]*`) are rejected by the .env export with HTTP 400 and a message pointing at the JSON export, which keeps accepting any key; the .env import rejects them with the offending line number
+- [x] Updates require the version read with the secret (`PUT .../secrets/:secretId`); a partial key update is available at `PUT .../secrets/:secretId/keys`
 - [x] A programmatic pull first calls `GET /api/projects/:id/preview/pull` and then posts the returned `snapshotId` to `POST /api/projects/:id/pull`; a repository change in between answers 409 with a "preview again" message
 - [x] Sync events (push, pull, snapshot restore, discard of local changes, push conflict) emit a notification through the ecosystem notifications server when the integration is configured (`NOTIFICATIONS_API_ENDPOINT` / `NOTIFICATIONS_API_TOKEN`, disabled by default)
 - [x] Notification failures never fail the synchronization and notification payloads never contain secret values

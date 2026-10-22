@@ -26,7 +26,8 @@ import { registerStaticFiles } from "./StaticCacheHeaders";
 import { SyncNotificationsInit } from "./restic/SyncNotifications";
 import { cleanupStaleWorkDirs } from "./restic/TempWorkDir";
 import { AuthWiringSetOTel } from "./users/AuthWiring";
-import { DbUtilsInit, DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
+import { DbUtilsSetOTel } from "./utils-std-ts/DbUtils";
+import { DbInit } from "./utils-std-ts/DbInit";
 
 const logger = OTelLogger().createModuleLogger("app");
 
@@ -51,11 +52,7 @@ Promise.resolve().then(async () => {
 
   const span = OTelTracer().startSpan("init");
 
-  await DbUtilsInit(
-    span,
-    config,
-    path.join(__dirname, `../sql/${config.DATABASE_TYPE}`),
-  );
+  await DbInit(span, config);
   AuthWiringSetOTel(OTelTracer());
 
   // User scopes are the dynamic project access scopes
