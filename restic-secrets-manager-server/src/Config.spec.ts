@@ -1,4 +1,7 @@
-import { Config } from "./Config";
+import * as fse from "fs-extra";
+import * as os from "os";
+import path from "path";
+import { Config, ResolveAppVersion } from "./Config";
 
 describe("Config", () => {
   it("should keep sessions valid for 1 hour", () => {
@@ -50,6 +53,45 @@ describe("Config", () => {
       expect(config.RESTIC_TIMEOUT_SNAPSHOTS_MS).toBe(1234);
     } finally {
       delete process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS;
+    }
+  });
+});
+
+describe("application version", () => {
+  it("should report the root package.json version in development", () => {
+    const rootPackage = fse.readJsonSync(
+      path.resolve(__dirname, "../../package.json"),
+    );
+    expect(new Config().VERSION).toBe(rootPackage.version);
+  });
+
+  it("should resolve the root manifest copied next to dist in the container", () => {
+    const tmpDir = fse.mkdtempSync(path.join(os.tmpdir(), "rsm-version-"));
+    try {
+      const distDir = path.join(tmpDir, "app", "dist");
+      fse.ensureDirSync(distDir);
+      fse.writeJsonSync(path.join(tmpDir, "app", "package.json"), {
+        name: "restic-secrets-manager",
+        version: "9.9.9",
+      });
+      expect(ResolveAppVersion(distDir)).toBe("9.9.9");
+    } finally {
+      fse.removeSync(tmpDir);
+    }
+  });
+
+  it("should ignore a server-only manifest and fall back to 0.0.0", () => {
+    const tmpDir = fse.mkdtempSync(path.join(os.tmpdir(), "rsm-version-"));
+    try {
+      const distDir = path.join(tmpDir, "app", "dist");
+      fse.ensureDirSync(distDir);
+      fse.writeJsonSync(path.join(tmpDir, "app", "package.json"), {
+        name: "restic-secrets-manager-server",
+        version: "0.2.0",
+      });
+      expect(ResolveAppVersion(distDir)).toBe("0.0.0");
+    } finally {
+      fse.removeSync(tmpDir);
     }
   });
 });

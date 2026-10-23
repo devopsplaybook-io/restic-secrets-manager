@@ -78,5 +78,6 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] A programmatic pull first calls `GET /api/projects/:id/preview/pull` and then posts the returned `snapshotId` to `POST /api/projects/:id/pull`; a repository change in between answers 409 with a "preview again" message
 - [x] Sync events (push, pull, snapshot restore, discard of local changes, push conflict) emit a notification through the ecosystem notifications server when the integration is configured (`NOTIFICATIONS_API_ENDPOINT` / `NOTIFICATIONS_API_TOKEN`, disabled by default)
 - [x] Notification failures never fail the synchronization and notification payloads never contain secret values
+- [x] Notification endpoint/token changes in `config.json` are applied on reload without a restart: re-initializing replaces the single notifications client
 
-Last spec review: 2026-10-22
+Last spec review: 2026-10-23

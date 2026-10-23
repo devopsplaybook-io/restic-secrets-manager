@@ -37,9 +37,17 @@ Promise.resolve().then(async () => {
   //
   const config = new Config();
   await config.reload();
-  watchFile(config.CONFIG_FILE, () => {
+  watchFile(config.CONFIG_FILE, async () => {
     logger.info(`Config updated: ${config.CONFIG_FILE}`);
-    config.reload();
+    try {
+      await config.reload();
+      // Rebuild the notifications client from the new config; re-init
+      // replaces the module-level client, so endpoint/token changes apply
+      // without a restart and no duplicate registration can accumulate.
+      SyncNotificationsInit(config);
+    } catch (e) {
+      logger.error("Failed to reload the configuration", e);
+    }
   });
 
   OTelSetTracer(new StandardTracer(config));

@@ -43,6 +43,12 @@ client-supplied `X-Forwarded-For` headers.
 
 ## Deployment notes
 
+- **Version**: the Docker image tag and the version the server reports
+  (OpenTelemetry service) come from the root `package.json`. The server
+  reads the root manifest both in development and in the container (the
+  Dockerfile copies it next to `dist`), so both report the same version;
+  `VERSION` overrides it when explicitly set.
+
 - **Replicas and locking**: pull/push/restore/discard and previews are
   serialized per project by an in-process queue plus, with
   `DATABASE_TYPE=postgres`, a PostgreSQL advisory lock held on a dedicated

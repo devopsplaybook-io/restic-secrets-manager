@@ -71,7 +71,8 @@ restic-secrets-manager/
 - **Dev mode**: `tsx watch` (hot-reload)
 - **Tests**: Jest with `@swc/jest`, files named `*.spec.ts` alongside source
 - **Linting**: oxlint
-- **Config**: Loaded from `config.json`, overridable via environment variables (`ConfigBase`)
+- **Config**: Loaded from `config.json`, overridable via environment variables (`ConfigBase`); the file watcher reloads it and re-applies the notification settings without a restart
+- **Version**: `VERSION` is the root `package.json` version (`ResolveAppVersion` in `src/Config.ts`), resolved in both the dev (`../..`) and container (`..`, next to `dist`) layouts; `VERSION` env/config still overrides it
 - **Sessions**: JWT validity is 1 hour by default and sessions are never auto-renewed
 - **Secrets handling**: restic credentials are per-project settings; never log sensitive values
 
@@ -87,23 +88,26 @@ restic-secrets-manager/
 
 ### Proxy (`restic-secrets-manager-proxy/`)
 
-- **Traefik v2.9.6** for local development reverse proxy
+- **Traefik 3.7.16** (pinned) for local development reverse proxy; `start.sh` downloads the official release on first run (Linux amd64/arm64) and verifies it against `traefik_v3.7.16_checksums.txt` before extracting — never bypass the checksum
 - Routes: web UI on port 3000, API on port 8080, proxy listens on port 9999
-- Only used in development; production uses the all-in-one container
+- The API/dashboard is unauthenticated and bound to `127.0.0.1:9091` (loopback) only; never expose it on another interface without authentication
+- Only used in development; production uses the all-in-one container. See `restic-secrets-manager-proxy/README.md`.
 
 ### Docker
 
 - Multi-stage build: builder stage compiles server + generates web, runtime stage uses `node:26-alpine`
 - Runtime image includes the `restic` binary
 - Single container serves both API and static web files
+- The **root `package.json`** is the application release version: it drives the image tag and is copied next to `dist` so the server reports the same version in development and in the container; keep it the only release-version source
 - Application title ("Restic Secrets Manager") is hardcoded in `restic-secrets-manager-web/nuxt.config.ts` (browser tab and PWA manifest)
 
 ## CI/CD
 
 GitHub Actions workflows are defined in `.github/workflows/`, reusing shared workflows from `devopsplaybook-io/common-utils`:
 
-- **`main-build.yml`**: On push to `main`. Runs `npm run build`, `npm run lint`, `npm run test` on `restic-secrets-manager-server`, then builds & pushes multi-arch Docker image to Docker Hub.
-- **`pr-check.yml`**: On PR to `main`. Runs `npm run build`, `npm run lint`, `npm run test` on `restic-secrets-manager-server`, then builds & pushes a `beta` Docker image.
+- **`main-build.yml`**: On push to `main`. Promotes the PR-validated image to the release tags and runs the shared dependency audit (`audit_enabled: true`).
+- **`pr-check.yml`**: On PR to `main`. Runs build/lint/test for the server and the web app through the shared PR workflow, builds & pushes the `beta`/`beta-pr-<N>` Docker image, and runs the shared dependency audit gate.
+- **Dependency audit**: the shared gate fails on unallowlisted high/critical *production* advisories (`npm audit --omit=dev`) and reports dev/build-only advisories without failing. Accepted exceptions must be time-boxed in `.github/audit-allowlist.json` (`id`, `package`, `scope` `runtime|dev`, `reason`, `owner`, `expires`); never silence an advisory by weakening a check.
 
 Secrets required in GitHub repository:
 
