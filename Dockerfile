@@ -30,6 +30,8 @@ COPY --from=builder /opt/src/restic-secrets-manager-server/dist /opt/app/restic-
 COPY --from=builder /opt/src/restic-secrets-manager-web/.output/public /opt/app/restic-secrets-manager/web
 COPY restic-secrets-manager-server/config.json /opt/app/restic-secrets-manager/config.json
 COPY restic-secrets-manager-server/sql /opt/app/restic-secrets-manager/sql
+# Root manifest: it is the application version reported by the server
+# (ResolveAppVersion in src/Config.ts) and the version used for the image tag
 COPY package.json /opt/app/restic-secrets-manager/package.json
 
 WORKDIR /opt/app/restic-secrets-manager

@@ -8,9 +8,10 @@ on:
 
 jobs:
   merge-build:
-    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-merge-build.yml@main
+    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-merge-build.yml@feature/2026.10.23-dependency-audit-gate
     with:
       node_app_directories: '["restic-secrets-manager-server","restic-secrets-manager-web"]'
+      audit_enabled: true
     secrets:
       DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
       DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}

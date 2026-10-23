@@ -5,6 +5,32 @@ import { OTelLogger } from "./OTelContext";
 
 const logger = OTelLogger().createModuleLogger("config");
 
+/**
+ * Application release version: the version of the root `package.json`, which
+ * is also the version used for the Docker image tag. In development
+ * `__dirname` is `restic-secrets-manager-server/src`; in the container it is
+ * `/opt/app/restic-secrets-manager/dist`, next to the root manifest copied by
+ * the Dockerfile. Manifests of other packages (the server manifest) are
+ * skipped so both layouts report the same version.
+ */
+export function ResolveAppVersion(baseDir: string = __dirname): string {
+  for (const candidate of [
+    path.resolve(baseDir, "../package.json"),
+    path.resolve(baseDir, "../../package.json"),
+  ]) {
+    try {
+      const pkg = fse.readJsonSync(candidate);
+      if (pkg && pkg.name === "restic-secrets-manager" && pkg.version) {
+        return pkg.version;
+      }
+      // eslint-disable-next-line no-unused-vars
+    } catch (_e) {
+      // try the next candidate
+    }
+  }
+  return "0.0.0";
+}
+
 export class Config extends ConfigBase {
   // Sessions last 1 hour and are never renewed
   public JWT_VALIDITY_DURATION = 3600;
@@ -39,16 +65,8 @@ export class Config extends ConfigBase {
   constructor() {
     super("restic-secrets-manager-server");
 
-    // Override VERSION with restic-secrets-manager-server's own package.json
-    try {
-      const pkg = fse.readJsonSync(path.resolve(__dirname, "../package.json"));
-      if (pkg && pkg.version) {
-        this.VERSION = pkg.version;
-      }
-      // eslint-disable-next-line no-unused-vars
-    } catch (_e) {
-      // fallback to default
-    }
+    // One documented application version in development and in the container
+    this.VERSION = ResolveAppVersion();
 
     // Register project-specific fields so reload() processes them
     this.addConfigField({ field: "TMP_DIR" });

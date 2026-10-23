@@ -51,4 +51,4 @@ Each project is defined with the settings required to connect to a restic reposi
 - [x] Admin visibility is resolved from the live database role, not from the session token: a demoted admin immediately loses cross-project access
 - [x] Users without access to any project see an empty list
 
-Last spec review: 2026-10-22
+Last spec review: 2026-10-23

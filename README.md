@@ -27,9 +27,11 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 | ------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- |
 | `restic-secrets-manager-server` | Fastify REST API, serves the web build and calls the `restic` CLI             | TypeScript, Fastify, better-sqlite3 / pg |
 | `restic-secrets-manager-web`    | Single-page application                                                       | Nuxt (SPA), Pinia, axios                 |
-| `restic-secrets-manager-proxy`  | Development proxy routing `/` to the web dev server and `/api/` to the server | Traefik                                  |
+| `restic-secrets-manager-proxy`  | Development proxy routing `/` to the web dev server and `/api/` to the server | Traefik 3 (dev only)                     |
 
 The `restic` binary must be available on the machine running the server (it is included in the Docker image).
+
+The application release version is the **root `package.json` version**: it is used for the Docker image tag and is the version the server reports in development and in the container (OpenTelemetry service version). The `VERSION` setting overrides it when explicitly set. The dev proxy pins Traefik 3.7.16, verifies the release checksum before extraction and keeps its dashboard on the loopback interface only — see [restic-secrets-manager-proxy/README.md](./restic-secrets-manager-proxy/README.md).
 
 ## Quick Start
 
@@ -106,7 +108,7 @@ The `.env` export uses the canonical server serializer (special characters and c
 
 ## Sync notifications
 
-restic-secrets-manager can notify the ecosystem notifications server ([notifications](https://github.com/devopsplaybook-io/notifications)) on sync events: push success, pull success, snapshot restore, discard of local changes and push conflict. Set `NOTIFICATIONS_API_ENDPOINT` and `NOTIFICATIONS_API_TOKEN` to enable the integration; it is disabled by default, failures never break a synchronization, and payloads carry project/snapshot/actor information but never secret values.
+restic-secrets-manager can notify the ecosystem notifications server ([notifications](https://github.com/devopsplaybook-io/notifications)) on sync events: push success, pull success, snapshot restore, discard of local changes and push conflict. Set `NOTIFICATIONS_API_ENDPOINT` and `NOTIFICATIONS_API_TOKEN` to enable the integration; it is disabled by default, failures never break a synchronization, and payloads carry project/snapshot/actor information but never secret values. Changes to these settings in `config.json` are applied when the file is reloaded (no server restart needed).
 
 ## Configuration
 

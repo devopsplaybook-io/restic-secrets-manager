@@ -64,6 +64,55 @@ describe("SyncNotificationsInit", () => {
       }),
     );
   });
+
+  it("should replace the client when re-initialized with a new endpoint and token", () => {
+    clientConstructorMock.mockImplementation(() => ({
+      send: jest.fn().mockResolvedValue(null),
+    }));
+    SyncNotificationsInit({
+      NOTIFICATIONS_API_ENDPOINT: "https://first.example.com",
+      NOTIFICATIONS_API_TOKEN: "token-1",
+    } as any);
+    SyncNotificationsInit({
+      NOTIFICATIONS_API_ENDPOINT: "https://second.example.com",
+      NOTIFICATIONS_API_TOKEN: "token-2",
+    } as any);
+
+    const firstSend = clientConstructorMock.mock.results[0].value.send;
+    const secondSend = clientConstructorMock.mock.results[1].value.send;
+    expect(clientConstructorMock).toHaveBeenCalledTimes(2);
+    expect(clientConstructorMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        apiEndpoint: "https://second.example.com",
+        apiToken: "token-2",
+      }),
+    );
+
+    SyncNotificationsNotify("push", projectFixture(), "alice", "snap-1");
+    expect(secondSend).toHaveBeenCalledTimes(1);
+    expect(firstSend).not.toHaveBeenCalled();
+  });
+
+  it("should disable notifications when re-initialized without an endpoint", () => {
+    clientConstructorMock.mockImplementation(() => ({
+      send: jest.fn().mockResolvedValue(null),
+    }));
+    SyncNotificationsInit({
+      NOTIFICATIONS_API_ENDPOINT: "https://first.example.com",
+      NOTIFICATIONS_API_TOKEN: "token-1",
+    } as any);
+    const firstSend = clientConstructorMock.mock.results[0].value.send;
+
+    SyncNotificationsInit({
+      NOTIFICATIONS_API_ENDPOINT: "",
+      NOTIFICATIONS_API_TOKEN: "",
+    } as any);
+
+    SyncNotificationsNotify("push", projectFixture(), "alice", "snap-1");
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(clientConstructorMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("SyncNotificationsNotify", () => {

@@ -41,4 +41,4 @@
 - [x] A token authenticates as its owning user with the user's live role and project scopes (resolved per request, so access or role changes apply immediately)
 - [x] The number of API tokens per user is bounded (`API_TOKENS_MAX_PER_USER`)
 
-Last spec review: 2026-10-22
+Last spec review: 2026-10-23

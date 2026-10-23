@@ -33,6 +33,12 @@ const EVENT_BODIES: Record<SyncNotificationEvent, (actor: string) => string> = {
 
 let client: NotificationsClient | null = null;
 
+/**
+ * Create (or replace) the module-level notifications client from the current
+ * configuration. Calling it again after a config reload disposes the previous
+ * client and applies the new endpoint/token; there is a single client, so no
+ * duplicate registration can accumulate.
+ */
 export function SyncNotificationsInit(config: Config): void {
   const endpoint = config.NOTIFICATIONS_API_ENDPOINT;
   const token = config.NOTIFICATIONS_API_TOKEN;

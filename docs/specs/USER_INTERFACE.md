@@ -83,4 +83,4 @@
 - [x] Importing .env content rejects invalid environment variable names with the offending line number; JSON import keeps accepting any key
 - [x] "Copy as .env" uses the server export (canonical escaping and key validation): invalid keys surface the server explanation, and "Copy as JSON" remains available
 
-Last spec review: 2026-10-22
+Last spec review: 2026-10-23
