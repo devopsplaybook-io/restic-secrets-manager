@@ -8,7 +8,7 @@ on:
 
 jobs:
   merge-build:
-    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-merge-build.yml@feature/2026.10.23-dependency-audit-gate
+    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-merge-build.yml@main
     with:
       node_app_directories: '["restic-secrets-manager-server","restic-secrets-manager-web"]'
       audit_enabled: true
