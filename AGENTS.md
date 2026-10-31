@@ -88,7 +88,7 @@ restic-secrets-manager/
 
 ### Proxy (`restic-secrets-manager-proxy/`)
 
-- **Traefik 3.7.16** (pinned) for local development reverse proxy; `start.sh` downloads the official release on first run (Linux amd64/arm64) and verifies it against `traefik_v3.7.16_checksums.txt` before extracting — never bypass the checksum
+- **Traefik 3.7.17** (pinned) for local development reverse proxy; `start.sh` downloads the official release on first run (Linux amd64/arm64) and verifies it against `traefik_v3.7.17_checksums.txt` before extracting — never bypass the checksum
 - Routes: web UI on port 3000, API on port 8080, proxy listens on port 9999
 - The API/dashboard is unauthenticated and bound to `127.0.0.1:9091` (loopback) only; never expose it on another interface without authentication
 - Only used in development; production uses the all-in-one container. See `restic-secrets-manager-proxy/README.md`.

@@ -12,12 +12,12 @@
     "dev": "tsx watch ./src/App.ts"
   },
   "dependencies": {
-    "@devopsplaybook.io/common-utils": "^2.2.0",
-    "@devopsplaybook.io/otel-utils": "^1.5.1",
-    "@devopsplaybook.io/otel-utils-fastify": "^1.4.1",
-    "@fastify/compress": "^9.2.2",
+    "@devopsplaybook.io/common-utils": "^2.4.1",
+    "@devopsplaybook.io/otel-utils": "^1.9.1",
+    "@devopsplaybook.io/otel-utils-fastify": "^1.7.1",
+    "@fastify/compress": "^9.3.0",
     "@fastify/cors": "^11.3.1",
-    "@fastify/static": "^10.1.6",
+    "@fastify/static": "^10.1.8",
     "@opentelemetry/sdk-trace": "^3.0.0",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^13.0.3",
@@ -31,16 +31,16 @@
     "follow-redirects": "^1.16.1"
   },
   "devDependencies": {
-    "@swc/core": "^1.16.18",
+    "@swc/core": "^1.16.21",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/fs-extra": "^11.0.4",
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "jest": "^30.5.2",
-    "oxlint": "^1.88.0",
+    "oxlint": "^1.90.0",
     "sinon": "^22.1.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"

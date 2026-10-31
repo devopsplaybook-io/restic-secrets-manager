@@ -12,7 +12,7 @@ Requirements: Node.js 26+, npm, [pm2](https://pm2.keymetrics.io/) and the `resti
 
 `npm run dev` (via [`docs/dev/run-dev-env.sh`](./run-dev-env.sh)) installs the dependencies of all components, then starts through pm2:
 
-- the proxy on port `9999` ([`restic-secrets-manager-proxy`](../../restic-secrets-manager-proxy)) — main entry point, routing `/` to the web dev server and `/api/` to the API server. It pins Traefik 3.7.16, verifies the release checksum on download and serves the dashboard only on `http://127.0.0.1:9091/dashboard/` (loopback); delete `restic-secrets-manager-proxy/bin/` to force a fresh download
+- the proxy on port `9999` ([`restic-secrets-manager-proxy`](../../restic-secrets-manager-proxy)) — main entry point, routing `/` to the web dev server and `/api/` to the API server. It pins Traefik 3.7.17, verifies the release checksum on download and serves the dashboard only on `http://127.0.0.1:9091/dashboard/` (loopback); delete `restic-secrets-manager-proxy/bin/` to force a fresh download
 - the server on port `8080` ([`restic-secrets-manager-server`](../../restic-secrets-manager-server))
 - the web application on port `3000` ([`restic-secrets-manager-web`](../../restic-secrets-manager-web))
 
