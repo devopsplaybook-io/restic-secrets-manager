@@ -8,7 +8,7 @@ set -euo pipefail
 
 SERVICE_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="${SERVICE_DIR}/bin"
-TRAEFIK_VERSION="3.7.16"
+TRAEFIK_VERSION="3.7.17"
 VERSION_STAMP="${BIN_DIR}/.traefik-version"
 DOWNLOAD_URL="https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}"
 

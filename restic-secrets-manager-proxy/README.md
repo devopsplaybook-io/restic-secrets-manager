@@ -10,12 +10,12 @@ port `9999` ([`traefik-rules.yml`](./traefik-rules.yml)).
 
 ## Pinned version and checksum
 
-`start.sh` pins **Traefik 3.7.16** (current stable 3.x) and downloads the
+`start.sh` pins **Traefik 3.7.17** (current stable 3.x) and downloads the
 official GitHub release archive on first run:
 
 - Platform: Linux only, `amd64` or `arm64` (the script fails with an explicit
   message otherwise; use WSL2 on Windows).
-- The archive is verified against `traefik_v3.7.16_checksums.txt` from the same
+- The archive is verified against `traefik_v3.7.17_checksums.txt` from the same
   release with `sha256sum -c` **before** it is extracted.
 - Binaries live in `bin/` (git-ignored), stamped with `bin/.traefik-version`.
 

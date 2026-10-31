@@ -31,7 +31,7 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 
 The `restic` binary must be available on the machine running the server (it is included in the Docker image).
 
-The application release version is the **root `package.json` version**: it is used for the Docker image tag and is the version the server reports in development and in the container (OpenTelemetry service version). The `VERSION` setting overrides it when explicitly set. The dev proxy pins Traefik 3.7.16, verifies the release checksum before extraction and keeps its dashboard on the loopback interface only — see [restic-secrets-manager-proxy/README.md](./restic-secrets-manager-proxy/README.md).
+The application release version is the **root `package.json` version**: it is used for the Docker image tag and is the version the server reports in development and in the container (OpenTelemetry service version). The `VERSION` setting overrides it when explicitly set. The dev proxy pins Traefik 3.7.17, verifies the release checksum before extraction and keeps its dashboard on the loopback interface only — see [restic-secrets-manager-proxy/README.md](./restic-secrets-manager-proxy/README.md).
 
 ## Quick Start
 

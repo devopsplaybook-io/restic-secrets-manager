@@ -25,7 +25,7 @@
 
 ## Proxy (dev only)
 
-- Traefik 3.7.16, downloaded by `restic-secrets-manager-proxy/start.sh` from the pinned GitHub release and verified against the release `sha256` checksum before extraction; Linux `amd64`/`arm64` only
+- Traefik 3.7.17, downloaded by `restic-secrets-manager-proxy/start.sh` from the pinned GitHub release and verified against the release `sha256` checksum before extraction; Linux `amd64`/`arm64` only
 - Dashboard/API bound to `127.0.0.1:9091` (unauthenticated, loopback-only); routes on port `9999`
 
 ## Packaging
@@ -35,4 +35,4 @@
 - GitHub Actions CI reusing the shared devopsplaybook.io workflows: build/lint/test of the server and web apps, the immutable PR-image promotion, and the shared dependency-audit gate (`npm audit --omit=dev`; unallowlisted high/critical production advisories fail, dev-only advisories are reported, accepted exceptions live in `.github/audit-allowlist.json` with an owner and expiry date)
 - The application release version is the root `package.json` version: it drives the Docker image tag and is the version the server reports (OpenTelemetry service version) both in development and in the container; `VERSION` still overrides it per `ConfigBase`
 
-Last spec review: 2026-10-23
+Last spec review: 2026-10-31
