@@ -56,6 +56,47 @@ describe("Config", () => {
     }
   });
 
+  it("should default the status fan-out bounds", () => {
+    const config = new Config();
+    expect(config.SYNC_STATUS_CACHE_TTL_MS).toBe(30_000);
+    expect(config.SYNC_STATUS_REQUEST_DEADLINE_MS).toBe(5_000);
+    expect(config.SYNC_STATUS_MAX_WAITERS).toBe(100);
+  });
+
+  it("should apply a status setting change without a restart", async () => {
+    const tmpDir = fse.mkdtempSync(path.join(os.tmpdir(), "rsm-status-"));
+    const previousConfigFile = process.env.CONFIG_FILE;
+    const previousDeadline = process.env.SYNC_STATUS_REQUEST_DEADLINE_MS;
+    delete process.env.SYNC_STATUS_REQUEST_DEADLINE_MS;
+    process.env.CONFIG_FILE = path.join(tmpDir, "config.json");
+    try {
+      fse.writeJsonSync(process.env.CONFIG_FILE, {
+        SYNC_STATUS_REQUEST_DEADLINE_MS: 1234,
+      });
+      const config = new Config();
+      await config.reload();
+      expect(config.SYNC_STATUS_REQUEST_DEADLINE_MS).toBe(1234);
+
+      fse.writeJsonSync(process.env.CONFIG_FILE, {
+        SYNC_STATUS_REQUEST_DEADLINE_MS: 2345,
+      });
+      await config.reload();
+      expect(config.SYNC_STATUS_REQUEST_DEADLINE_MS).toBe(2345);
+    } finally {
+      if (previousConfigFile === undefined) {
+        delete process.env.CONFIG_FILE;
+      } else {
+        process.env.CONFIG_FILE = previousConfigFile;
+      }
+      if (previousDeadline === undefined) {
+        delete process.env.SYNC_STATUS_REQUEST_DEADLINE_MS;
+      } else {
+        process.env.SYNC_STATUS_REQUEST_DEADLINE_MS = previousDeadline;
+      }
+      fse.removeSync(tmpDir);
+    }
+  });
+
   it("should apply a file change to the same instance without a restart", async () => {
     const tmpDir = fse.mkdtempSync(path.join(os.tmpdir(), "rsm-reload-"));
     const previousConfigFile = process.env.CONFIG_FILE;

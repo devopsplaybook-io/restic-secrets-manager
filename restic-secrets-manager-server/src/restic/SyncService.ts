@@ -515,11 +515,13 @@ export async function ResticSyncStatus(
   config: Config,
   project: Project,
   dataApi: any = DataApi,
+  signal?: AbortSignal,
 ): Promise<SyncStatusResult> {
   const client = new ResticClient(
     project,
     undefined,
     resticTimeoutsFromConfig(config),
+    signal,
   );
   const snapshots = await client.snapshots();
   const latest = latestSnapshot(snapshots);

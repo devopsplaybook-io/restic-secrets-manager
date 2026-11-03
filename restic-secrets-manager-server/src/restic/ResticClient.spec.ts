@@ -8,6 +8,7 @@ import {
   defaultResticRunner,
   isRepoNotInitialized,
   latestSnapshot,
+  MAX_SNAPSHOTS_OUTPUT_BYTES,
   parseBackupSnapshotId,
   ResticClient,
   ResticCommandResult,
@@ -394,6 +395,7 @@ describe("ResticClient operation timeouts", () => {
         timeoutMs: TEST_TIMEOUTS.snapshotsMs,
         killGraceMs: TEST_TIMEOUTS.killGraceMs,
         signal: undefined,
+        maxOutputBytes: MAX_SNAPSHOTS_OUTPUT_BYTES,
       });
     }
   });
@@ -471,6 +473,28 @@ describe("ResticClient operation timeouts", () => {
     }
   });
 
+  it("should reject a truncated snapshot listing instead of partial data", async () => {
+    const runner: ResticRunner = async () => result({ truncated: true });
+    await expect(clientWith(runner).snapshots()).rejects.toThrow(
+      "10 MB limit",
+    );
+  });
+
+  it("should reject a truncated snapshot lookup", async () => {
+    const runner: ResticRunner = async () =>
+      result({ truncated: true, stdout: "[]" });
+    await expect(clientWith(runner).snapshot("aaaaaaaaaa")).rejects.toThrow(
+      "10 MB limit",
+    );
+  });
+
+  it("should reject a truncated repository check", async () => {
+    const runner: ResticRunner = async () => result({ truncated: true });
+    await expect(clientWith(runner).repoInitialized()).rejects.toThrow(
+      "10 MB limit",
+    );
+  });
+
   it("should default to the built-in timeouts", async () => {
     const captured: CapturedCall[] = [];
     const client = new ResticClient(makeProject(), capturingRunner(captured));
@@ -536,6 +560,22 @@ describe("defaultResticRunner process control", () => {
     } finally {
       await fse.remove(pidFile);
     }
+  });
+
+  it("should stop a process that exceeds the output cap and flag truncation", async () => {
+    const outcome = await defaultResticRunner(
+      process.execPath,
+      [
+        "-e",
+        'process.stdout.write("x".repeat(8192)); setInterval(() => {}, 1000);',
+      ],
+      process.env,
+      undefined,
+      { timeoutMs: 10_000, killGraceMs: 200, maxOutputBytes: 1024 },
+    );
+    expect(outcome.truncated).toBe(true);
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.stdout.length).toBe(0);
   });
 });
 
@@ -625,6 +665,19 @@ describe("ResticClient testConnection", () => {
     });
   });
 
+  it("should report truncated output as an error, never as data", async () => {
+    const snapshots: ResticSnapshot[] = [
+      { id: "aaaaaaaaaa", time: "2026-01-01T10:00:00Z" },
+    ];
+    const runner: ResticRunner = async () =>
+      result({ truncated: true, stdout: JSON.stringify(snapshots) });
+    const client = new ResticClient(makeProject(), runner);
+    expect(await client.testConnection()).toEqual({
+      status: "error",
+      message: expect.stringContaining("10 MB limit"),
+    });
+  });
+
   it("should invoke snapshots with the connection test timeout", async () => {
     const captured: { args: string[]; options?: unknown }[] = [];
     const runner: ResticRunner = async (_command, args, _env, _cwd, options) => {
@@ -639,6 +692,7 @@ describe("ResticClient testConnection", () => {
       timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
       killGraceMs: DEFAULT_RESTIC_TIMEOUTS.killGraceMs,
       signal: undefined,
+      maxOutputBytes: MAX_SNAPSHOTS_OUTPUT_BYTES,
     });
     expect(CONNECTION_TEST_TIMEOUT_MS).toBe(30_000);
   });

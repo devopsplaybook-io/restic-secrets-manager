@@ -71,7 +71,13 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Snapshot history entries carry the pusher attribution: the `pushed-by:` restic tag when present, falling back to the user and host reported by restic; older snapshots carry no attribution
 - [x] Restic synchronization failures surface richer error context: the last 10 output lines, capped at 1000 characters (credentials never appear, they are passed via environment variables)
 - [x] Every restic invocation (snapshots, restore, backup, init, connection test) is bounded by a configurable timeout (`RESTIC_TIMEOUT_*`, defaults 30 s / 5 min / 10 min / 60 s / 30 s); on expiry the process receives SIGTERM then SIGKILL after `RESTIC_KILL_GRACE_MS`, the API answers HTTP 504 and the project lock and status-cache slot are released
-- [x] A client disconnect aborts the restic process of its operation (SIGTERM/SIGKILL) so no orphan process survives; shared status checks are bounded by the snapshots timeout instead
+- [x] A client disconnect aborts the restic process of its operation (SIGTERM/SIGKILL) so no orphan process survives; this includes shared status checks, whose slot is released and whose result is never cached
+- [x] Project sync statuses are cached per project for `SYNC_STATUS_CACHE_TTL_MS` (default 30 s): a fresh entry answers immediately, a stale entry is served while one background refresh runs, and concurrent requests for the same project share a single run
+- [x] `GET /api/projects/status` is bounded by `SYNC_STATUS_REQUEST_DEADLINE_MS` (default 5 s): projects whose check is not ready answer with the existing `{error:true}` marker instead of extending the request
+- [x] Status runs are limited to three concurrent executions per instance, with a finite waiter queue (`SYNC_STATUS_MAX_WAITERS`, default 100); requests beyond the queue answer HTTP 503 `STATUS_QUEUE_FULL`
+- [x] Aborted and failed status runs are never cached, and an invalidated project cannot be repopulated by a run that started before the invalidation
+- [x] The snapshot history is paginated: `limit` (default 50, maximum 200) and a `before` snapshot-id cursor return `{snapshots, hasMore, nextBefore}`; an invalid limit answers 400 `INVALID_SNAPSHOT_LIMIT` and an unknown cursor 400 `INVALID_SNAPSHOT_CURSOR`
+- [x] Snapshot listings are capped at 10 MB of restic output and report an explicit error instead of returning truncated data
 - [x] Synchronization operations (pull, push, restore, discard and previews) are serialized per project across replicas with a PostgreSQL advisory lock in addition to the in-process queue; SQLite deployments remain single-replica
 - [x] Temporary restic working directories are created with mode `0700` and the secret files inside with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup (a private tmpfs `TMP_DIR` is recommended so plaintext never reaches persistent disk)
 

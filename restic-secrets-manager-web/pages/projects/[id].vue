@@ -470,8 +470,7 @@ onMounted(async () => {
     router.push("/login");
     return;
   }
-  await loadProject();
-  await loadSecrets();
+  await Promise.all([loadProject(), loadSecrets()]);
   offerDraftRestore();
 });
 

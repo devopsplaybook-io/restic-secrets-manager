@@ -102,6 +102,7 @@ import {
 import {
   ResticSyncDiscardLocalChanges,
   ResticSyncError,
+  ResticSyncListSnapshots,
   ResticSyncPull,
   ResticSyncPush,
   ResticSyncRestoreSnapshot,
@@ -144,6 +145,7 @@ const syncPushMock = ResticSyncPush as jest.Mock;
 const syncRestoreMock = ResticSyncRestoreSnapshot as jest.Mock;
 const syncDiscardMock = ResticSyncDiscardLocalChanges as jest.Mock;
 const syncTestConnectionMock = ResticSyncTestConnection as jest.Mock;
+const syncListMock = ResticSyncListSnapshots as jest.Mock;
 const previewPullMock = ResticSyncPreviewPull as jest.Mock;
 const previewRestoreMock = ResticSyncPreviewRestoreSnapshot as jest.Mock;
 const previewDiscardMock = ResticSyncPreviewDiscardLocalChanges as jest.Mock;
@@ -286,6 +288,155 @@ describe("GET /status", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().statuses).toEqual({ p1: { error: true } });
+  });
+
+  it("should answer within the request deadline with partial results", async () => {
+    config.SYNC_STATUS_REQUEST_DEADLINE_MS = 30;
+    dataListMock.mockResolvedValue([
+      projectFixture({ id: "p1" }),
+      projectFixture({ id: "p2" }),
+    ]);
+    accessManyMock.mockReturnValue(new Set(["p1", "p2"]));
+    let releaseSlow: (value: unknown) => void = () => {};
+    const slow = new Promise((resolve) => {
+      releaseSlow = resolve;
+    });
+    cacheGetMock.mockImplementation(async (_span, project) => {
+      if (project.id === "p2") {
+        return slow;
+      }
+      return { needsPull: false, hasLocalChanges: false };
+    });
+
+    const startedAt = Date.now();
+    const res = await fastify.inject({ method: "GET", url: "/status" });
+    const elapsed = Date.now() - startedAt;
+
+    expect(res.statusCode).toBe(200);
+    expect(elapsed).toBeLessThan(1_000);
+    expect(res.json().statuses).toEqual({
+      p1: { needsPull: false, hasLocalChanges: false },
+      p2: { error: true },
+    });
+    releaseSlow({ needsPull: true });
+  });
+
+  it("should pass the request abort signal to every status check", async () => {
+    dataListMock.mockResolvedValue([projectFixture({ id: "p1" })]);
+    accessManyMock.mockReturnValue(new Set(["p1"]));
+    cacheGetMock.mockResolvedValue({ needsPull: false });
+
+    await fastify.inject({ method: "GET", url: "/status" });
+
+    expect(cacheGetMock.mock.calls[0][3]).toMatchObject({
+      signal: expect.any(AbortSignal),
+    });
+    expect(cacheGetMock.mock.calls[0][3].signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("GET /:id/status", () => {
+  it("should return the project status and honour the disconnect signal", async () => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    cacheGetMock.mockResolvedValue({ needsPull: true });
+
+    const res = await fastify.inject({ method: "GET", url: "/p1/status" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ needsPull: true });
+    expect(cacheGetMock.mock.calls[0][3]).toMatchObject({
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("should map a full status queue to 503 STATUS_QUEUE_FULL", async () => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    cacheGetMock.mockRejectedValue(
+      new ResticSyncError("Too many status checks are queued: retry shortly", 503, "STATUS_QUEUE_FULL"),
+    );
+
+    const res = await fastify.inject({ method: "GET", url: "/p1/status" });
+
+    expect(res.statusCode).toBe(503);
+    expect(res.json().code).toBe("STATUS_QUEUE_FULL");
+  });
+});
+
+describe("GET /:id/snapshots", () => {
+  function snapshotHistory(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `snap-${String(index).padStart(4, "0")}`,
+      time: new Date(Date.UTC(2026, 0, 1, 0, 0, count - index)).toISOString(),
+    }));
+  }
+
+  beforeEach(() => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    syncListMock.mockResolvedValue(snapshotHistory(120));
+  });
+
+  it("should default to the first 50 snapshots with the next cursor", async () => {
+    const res = await fastify.inject({ method: "GET", url: "/p1/snapshots" });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.snapshots).toHaveLength(50);
+    expect(body.snapshots[0].id).toBe("snap-0000");
+    expect(body.hasMore).toBe(true);
+    expect(body.nextBefore).toBe("snap-0049");
+  });
+
+  it("should page with the before cursor without overlap", async () => {
+    const second = await fastify.inject({
+      method: "GET",
+      url: "/p1/snapshots?before=snap-0049",
+    });
+
+    expect(second.statusCode).toBe(200);
+    const body = second.json();
+    expect(body.snapshots).toHaveLength(50);
+    expect(body.snapshots[0].id).toBe("snap-0050");
+    expect(body.nextBefore).toBe("snap-0099");
+
+    const third = await fastify.inject({
+      method: "GET",
+      url: "/p1/snapshots?before=snap-0099",
+    });
+    expect(third.json().snapshots).toHaveLength(20);
+    expect(third.json().hasMore).toBe(false);
+    expect(third.json().nextBefore).toBeNull();
+  });
+
+  it("should reject an invalid limit with 400 INVALID_SNAPSHOT_LIMIT", async () => {
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/snapshots?limit=0",
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe("INVALID_SNAPSHOT_LIMIT");
+    expect(syncListMock).not.toHaveBeenCalled();
+  });
+
+  it("should reject an unknown before cursor with 400 INVALID_SNAPSHOT_CURSOR", async () => {
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/snapshots?before=unknown",
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe("INVALID_SNAPSHOT_CURSOR");
+  });
+
+  it("should clamp a limit above the maximum", async () => {
+    syncListMock.mockResolvedValue(snapshotHistory(300));
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/p1/snapshots?limit=500",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().snapshots).toHaveLength(200);
   });
 });
 
