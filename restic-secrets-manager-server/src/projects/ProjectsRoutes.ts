@@ -13,6 +13,7 @@ import {
 import {
   ProjectScopesAdd,
   ProjectScopesPruneFromUsers,
+  ProjectScopesRefresh,
   ProjectScopesRemove,
 } from "./ProjectScopes";
 import {
@@ -48,7 +49,7 @@ import {
 } from "../restic/SyncStatusCache";
 import { RequestAbortSignal } from "../restic/RequestAbort";
 import { SyncNotificationsNotify } from "../restic/SyncNotifications";
-import { Config } from "../Config";
+import type { Config } from "../Config";
 import { DbUtilsWithLock } from "../utils-std-ts/DbUtils";
 import { ProjectWriteLocksRun } from "../restic/SyncLocks";
 
@@ -56,10 +57,16 @@ const logger = OTelLogger().createModuleLogger("projects");
 
 export class ProjectsRoutes {
   //
-  public async getRoutes(fastify: FastifyInstance): Promise<void> {
-    const config = new Config();
-    await config.reload();
-
+  /**
+   * Registers the project routes. The shared `Config` instance is passed in
+   * so handlers read the live values: the App reloads it in place when
+   * `config.json` changes, and the sync routes must see the new restic
+   * timeouts and `TMP_DIR` without a restart.
+   */
+  public async getRoutes(
+    fastify: FastifyInstance,
+    config: Config,
+  ): Promise<void> {
     //
     fastify.get("/", async (req, res) => {
       const user = await ProjectAccessGetUser(req, res);
@@ -165,6 +172,9 @@ export class ProjectsRoutes {
         });
       }
       ProjectScopesAdd(project.id);
+      // Reconcile the local scope list with the database (the local add
+      // already covers this replica until the refresh completes)
+      void ProjectScopesRefresh();
       await SecretsHashRefreshForProject(span, project.id);
       return res.status(201).send({ project: project.toTransportJson() });
     });
@@ -287,6 +297,9 @@ export class ProjectsRoutes {
       if (!deleted) {
         return res.status(404).send({ error: "Project Not Found" });
       }
+      // Outside the write lock: reconcile the local scope list with the
+      // database without holding the project lock during the query
+      void ProjectScopesRefresh();
       return res.status(200).send({});
     });
 

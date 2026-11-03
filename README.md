@@ -117,6 +117,16 @@ restic-secrets-manager can notify the ecosystem notifications server ([notificat
 
 Configuration is provided by environment variables (a `config.json` file next to the server can also be used):
 
+### Configuration reload
+
+`config.json` is watched while the server runs. When the file changes, these settings are applied to running requests **without a restart**:
+
+- `NOTIFICATIONS_API_ENDPOINT` and `NOTIFICATIONS_API_TOKEN` (the notifications client is rebuilt);
+- every `RESTIC_TIMEOUT_*` and `RESTIC_KILL_GRACE_MS`;
+- `TMP_DIR`, for restic operations started after the reload (an operation already running keeps its working directory).
+
+The successful reload is logged as `Configuration reloaded: ...`. All other settings are only guaranteed to be applied at startup: `API_PORT`, `TRUST_PROXY`, `CORS_POLICY_ORIGIN`, `DATA_DIR`, `DATABASE_*`, the JWT/auth settings and the OpenTelemetry exporters — restart the server after changing them. Environment variables are only re-read when a file change triggers a reload; prefer a restart after changing them. Each replica watches its own file, so a ConfigMap-based `config.json` update reaches the replicas independently.
+
 | Variable                               | Default                  | Description                                         |
 | -------------------------------------- | ------------------------ | --------------------------------------------------- |
 | `API_PORT`                             | `8080`                   | Server (API + web) port                             |

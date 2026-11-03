@@ -19,7 +19,10 @@ import {
   OTelTracer,
 } from "./OTelContext";
 import { ProjectsRoutes } from "./projects/ProjectsRoutes";
-import { ProjectScopesSync } from "./projects/ProjectScopes";
+import {
+  ProjectScopesRefreshStart,
+  ProjectScopesSync,
+} from "./projects/ProjectScopes";
 import { SecretsHashBackfillAll } from "./secrets/SecretsHash";
 import { SecretsRoutes } from "./secrets/SecretsRoutes";
 import { registerStaticFiles } from "./StaticCacheHeaders";
@@ -38,13 +41,17 @@ Promise.resolve().then(async () => {
   const config = new Config();
   await config.reload();
   watchFile(config.CONFIG_FILE, async () => {
-    logger.info(`Config updated: ${config.CONFIG_FILE}`);
+    logger.info(`Configuration file changed: ${config.CONFIG_FILE}`);
     try {
+      // reload() mutates this instance in place: the route handlers and the
+      // restic helpers read the new values on their next request, so the
+      // documented hot-reloadable settings (restic timeouts, TMP_DIR and
+      // notifications) apply without a restart.
       await config.reload();
-      // Rebuild the notifications client from the new config; re-init
-      // replaces the module-level client, so endpoint/token changes apply
-      // without a restart and no duplicate registration can accumulate.
       SyncNotificationsInit(config);
+      logger.info(
+        `Configuration reloaded: ${config.CONFIG_FILE} (restic timeouts, TMP_DIR and sync notifications applied)`,
+      );
     } catch (e) {
       logger.error("Failed to reload the configuration", e);
     }
@@ -68,6 +75,9 @@ Promise.resolve().then(async () => {
   // One-time backfill of the stored secrets content hashes (L10 upgrade)
   await SecretsHashBackfillAll(span);
   await AuthInit(span, config, [...User.ALL_SCOPES]);
+  // AuthInit overwrites ALL_SCOPES with the startup list: keep it aligned
+  // with the projects created or deleted by other replicas from now on
+  ProjectScopesRefreshStart();
 
   span.end();
 
@@ -124,7 +134,7 @@ Promise.resolve().then(async () => {
 
   await fastify.register(
     async (instance) => {
-      await new ProjectsRoutes().getRoutes(instance);
+      await new ProjectsRoutes().getRoutes(instance, config);
     },
     { prefix: "/api/projects" },
   );

@@ -1,4 +1,5 @@
 import Fastify, { FastifyInstance } from "fastify";
+import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { ProjectsRoutes } from "./ProjectsRoutes";
 
@@ -11,13 +12,6 @@ jest.mock("../users/ProjectAccess", () => ({
   ProjectAccessCanAccessMany: jest.fn(),
   ProjectAccessEnsure: jest.fn(),
   ProjectAccessGetUser: jest.fn(),
-}));
-
-// Keeps the route tests independent from the on-disk configuration
-jest.mock("../Config", () => ({
-  Config: jest.fn().mockImplementation(() => ({
-    reload: jest.fn().mockResolvedValue(undefined),
-  })),
 }));
 
 jest.mock("./ProjectsData", () => ({
@@ -50,6 +44,7 @@ jest.mock("../utils-std-ts/DbUtils", () => ({
 jest.mock("./ProjectScopes", () => ({
   ProjectScopesAdd: jest.fn(),
   ProjectScopesPruneFromUsers: jest.fn(),
+  ProjectScopesRefresh: jest.fn(),
   ProjectScopesRemove: jest.fn(),
 }));
 
@@ -101,6 +96,7 @@ import { DbUtilsWithLock } from "../utils-std-ts/DbUtils";
 import {
   ProjectScopesAdd,
   ProjectScopesPruneFromUsers,
+  ProjectScopesRefresh,
   ProjectScopesRemove,
 } from "./ProjectScopes";
 import {
@@ -139,6 +135,7 @@ const secretsListMock = SecretsDataListForProject as jest.Mock;
 const scopesPruneMock = ProjectScopesPruneFromUsers as jest.Mock;
 const scopesRemoveMock = ProjectScopesRemove as jest.Mock;
 const scopesAddMock = ProjectScopesAdd as jest.Mock;
+const scopesRefreshMock = ProjectScopesRefresh as jest.Mock;
 const cacheGetMock = SyncStatusCacheGet as jest.Mock;
 const cacheInvalidateMock = SyncStatusCacheInvalidate as jest.Mock;
 const notifyMock = SyncNotificationsNotify as jest.Mock;
@@ -196,14 +193,19 @@ function denyForbidden(): void {
 }
 
 let fastify: FastifyInstance;
+let config: Config;
 
 beforeEach(async () => {
   jest.clearAllMocks();
   getUserMock.mockResolvedValue(liveAdmin());
   ensureMock.mockImplementation(async () => liveAdmin());
   mustBeAdminMock.mockResolvedValue(undefined);
+  config = new Config();
+  config.TMP_DIR = "/tmp/original";
+  config.RESTIC_TIMEOUT_SNAPSHOTS_MS = 30_000;
+  jest.spyOn(config, "reload").mockResolvedValue(undefined);
   fastify = Fastify();
-  await new ProjectsRoutes().getRoutes(fastify);
+  await new ProjectsRoutes().getRoutes(fastify, config);
   await fastify.ready();
 });
 
@@ -312,6 +314,7 @@ describe("DELETE /:id", () => {
     expect(scopesRemoveMock).toHaveBeenCalledWith("p1");
     expect(scopesPruneMock).toHaveBeenCalledWith(undefined, "p1");
     expect(cacheInvalidateMock).toHaveBeenCalledWith("p1");
+    expect(scopesRefreshMock).toHaveBeenCalledTimes(1);
   });
 
   it("should keep the 200 when pruning the scope from users fails", async () => {
@@ -333,6 +336,7 @@ describe("DELETE /:id", () => {
 
     expect(res.statusCode).toBe(404);
     expect(dataDeleteMock).not.toHaveBeenCalled();
+    expect(scopesRefreshMock).not.toHaveBeenCalled();
   });
 
   it("should return 403 when the caller is not an admin", async () => {
@@ -373,6 +377,7 @@ describe("POST /", () => {
     );
     expect(dataAddMock).toHaveBeenCalledTimes(1);
     expect(scopesAddMock).toHaveBeenCalledTimes(1);
+    expect(scopesRefreshMock).toHaveBeenCalledTimes(1);
     expect(res.json().project.name).toBe("New Project");
   });
 
@@ -388,6 +393,7 @@ describe("POST /", () => {
     expect(res.statusCode).toBe(409);
     expect(res.json().code).toBe("PROJECT_NAME_CONFLICT");
     expect(dataAddMock).not.toHaveBeenCalled();
+    expect(scopesRefreshMock).not.toHaveBeenCalled();
   });
 
   it("should reject a duplicate repository target with 409 PROJECT_TARGET_CONFLICT", async () => {
@@ -407,6 +413,7 @@ describe("POST /", () => {
     expect(res.json().error).toContain("Existing Project");
     expect(dataAddMock).not.toHaveBeenCalled();
     expect(scopesAddMock).not.toHaveBeenCalled();
+    expect(scopesRefreshMock).not.toHaveBeenCalled();
   });
 
   it("should check the normalized repository target, not only the name", async () => {
@@ -812,6 +819,59 @@ describe("preview endpoints", () => {
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: "Access Denied", code: "FORBIDDEN" });
     expect(previewPullMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("configuration hot reload", () => {
+  it("should not read the configuration when registering the routes", () => {
+    expect(config.reload).not.toHaveBeenCalled();
+  });
+
+  it("should pass the live configuration to the sync status route", async () => {
+    dataListMock.mockResolvedValue([projectFixture({ id: "p1" })]);
+    accessManyMock.mockReturnValue(new Set(["p1"]));
+    cacheGetMock.mockResolvedValue({});
+
+    await fastify.inject({ method: "GET", url: "/status" });
+    expect(cacheGetMock.mock.calls[0][2]).toMatchObject({
+      TMP_DIR: "/tmp/original",
+      RESTIC_TIMEOUT_SNAPSHOTS_MS: 30_000,
+    });
+
+    // reload() mutates the shared instance in place (no restart)
+    config.TMP_DIR = "/tmp/reloaded";
+    config.RESTIC_TIMEOUT_SNAPSHOTS_MS = 1234;
+
+    await fastify.inject({ method: "GET", url: "/status" });
+    expect(cacheGetMock.mock.calls[1][2]).toMatchObject({
+      TMP_DIR: "/tmp/reloaded",
+      RESTIC_TIMEOUT_SNAPSHOTS_MS: 1234,
+    });
+  });
+
+  it("should pass the live configuration to a preview route", async () => {
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+    previewPullMock.mockResolvedValue({
+      summary: {},
+      secrets: [],
+      snapshotId: "abc12345",
+      snapshotTime: "2026-01-01T00:00:00Z",
+    });
+
+    await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
+    expect(previewPullMock.mock.calls[0][1]).toMatchObject({
+      TMP_DIR: "/tmp/original",
+      RESTIC_TIMEOUT_SNAPSHOTS_MS: 30_000,
+    });
+
+    config.TMP_DIR = "/tmp/reloaded";
+    config.RESTIC_TIMEOUT_SNAPSHOTS_MS = 1234;
+
+    await fastify.inject({ method: "GET", url: "/p1/preview/pull" });
+    expect(previewPullMock.mock.calls[1][1]).toMatchObject({
+      TMP_DIR: "/tmp/reloaded",
+      RESTIC_TIMEOUT_SNAPSHOTS_MS: 1234,
+    });
   });
 });
 

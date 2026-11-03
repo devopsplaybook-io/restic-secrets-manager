@@ -55,6 +55,54 @@ describe("Config", () => {
       delete process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS;
     }
   });
+
+  it("should apply a file change to the same instance without a restart", async () => {
+    const tmpDir = fse.mkdtempSync(path.join(os.tmpdir(), "rsm-reload-"));
+    const previousConfigFile = process.env.CONFIG_FILE;
+    const previousTmpDir = process.env.TMP_DIR;
+    const previousSnapshotsTimeout = process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS;
+    // The environment overrides the file: clear it to exercise config.json
+    delete process.env.TMP_DIR;
+    delete process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS;
+    process.env.CONFIG_FILE = path.join(tmpDir, "config.json");
+    try {
+      fse.writeJsonSync(process.env.CONFIG_FILE, {
+        TMP_DIR: path.join(tmpDir, "work-1"),
+        RESTIC_TIMEOUT_SNAPSHOTS_MS: 1111,
+      });
+      const config = new Config();
+      await config.reload();
+      expect(config.TMP_DIR).toBe(path.join(tmpDir, "work-1"));
+      expect(config.RESTIC_TIMEOUT_SNAPSHOTS_MS).toBe(1111);
+
+      // What the file watcher does: reload() mutates the same instance, so
+      // the route handlers observe the new values without a restart
+      fse.writeJsonSync(process.env.CONFIG_FILE, {
+        TMP_DIR: path.join(tmpDir, "work-2"),
+        RESTIC_TIMEOUT_SNAPSHOTS_MS: 2222,
+      });
+      await config.reload();
+      expect(config.TMP_DIR).toBe(path.join(tmpDir, "work-2"));
+      expect(config.RESTIC_TIMEOUT_SNAPSHOTS_MS).toBe(2222);
+    } finally {
+      if (previousConfigFile === undefined) {
+        delete process.env.CONFIG_FILE;
+      } else {
+        process.env.CONFIG_FILE = previousConfigFile;
+      }
+      if (previousTmpDir === undefined) {
+        delete process.env.TMP_DIR;
+      } else {
+        process.env.TMP_DIR = previousTmpDir;
+      }
+      if (previousSnapshotsTimeout === undefined) {
+        delete process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS;
+      } else {
+        process.env.RESTIC_TIMEOUT_SNAPSHOTS_MS = previousSnapshotsTimeout;
+      }
+      fse.removeSync(tmpDir);
+    }
+  });
 });
 
 describe("application version", () => {

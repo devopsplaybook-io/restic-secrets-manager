@@ -27,6 +27,7 @@ Each project is defined with the settings required to connect to a restic reposi
 - [x] Projects can be deleted by admins (deleting also deletes the project secrets from the application database; the restic repository is left untouched)
 - [x] Project deletion and the deletion of all its secrets run in one database transaction: a failed deletion leaves the project and its secrets intact. A `ON DELETE CASCADE` foreign key backs the guarantee (enforced on SQLite too) and the migration removes legacy orphan secrets
 - [x] Deleting a project also removes its access scope from the stored user records (best effort: a failed prune never fails the completed deletion)
+- [x] A project's access scope reaches every replica: immediately on the replica that created or deleted it, and within 30 seconds elsewhere (documented multi-replica refresh window)
 - [x] Projects can never be updated: settings are immutable after creation
 
 ## Setup confidence
