@@ -8,10 +8,11 @@ import {
 } from "@devopsplaybook.io/common-utils";
 import fastifyCompress from "@fastify/compress";
 import fastifyCors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { FastifyInstance } from "fastify";
 import { watchFile } from "fs-extra";
 import * as path from "path";
 import { Config } from "./Config";
+import { registerSecurityHeaders } from "./SecurityHeaders";
 import {
   OTelLogger,
   OTelSetMeter,
@@ -96,6 +97,9 @@ Promise.resolve().then(async () => {
     trustProxy: config.TRUST_PROXY,
   });
 
+  const webRoot = path.join(__dirname, "../web");
+  registerSecurityHeaders(fastify, webRoot);
+
   await fastify.register(fastifyCompress, {
     global: true,
     threshold: 1024,
@@ -146,7 +150,7 @@ Promise.resolve().then(async () => {
     { prefix: "/api/projects" },
   );
 
-  await registerStaticFiles(fastify, path.join(__dirname, "../web"));
+  await registerStaticFiles(fastify, webRoot);
 
   fastify.setNotFoundHandler((request, reply) => {
     if (
@@ -165,5 +169,30 @@ Promise.resolve().then(async () => {
       process.exit(1);
     }
     logger.info("API Listening");
+    registerGracefulShutdown(fastify);
   });
 });
+
+/**
+ * Forwards SIGTERM/SIGINT to Fastify's close so in-flight requests drain
+ * before the process exits (rolling updates stop the container cleanly).
+ */
+function registerGracefulShutdown(fastify: FastifyInstance): void {
+  let closing = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (closing) {
+      return;
+    }
+    closing = true;
+    logger.info(`Received ${signal}: shutting down`);
+    fastify.close().then(
+      () => process.exit(0),
+      (error) => {
+        logger.error("Error during shutdown", error);
+        process.exit(1);
+      },
+    );
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}

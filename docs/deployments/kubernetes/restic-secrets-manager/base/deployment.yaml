@@ -18,10 +18,27 @@ spec:
       labels:
         app: restic-secrets-manager
     spec:
+      securityContext:
+        # Matches the image USER (uid/gid 10001). fsGroup makes dynamically
+        # provisioned PVCs writable by the non-root user; storage classes or
+        # static volumes without fsGroup support require a manual
+        # `chown 10001:10001` of the volume (see the Kubernetes README).
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - image: restic-secrets-manager
           name: restic-secrets-manager
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
           env:
@@ -30,6 +47,16 @@ spec:
                 secretKeyRef:
                   name: restic-secrets-manager
                   key: JWT_KEY
+            # Plaintext restic working directories and the disposable restic
+            # cache stay on the memory-backed emptyDir mounted at /tmp.
+            - name: TMP_DIR
+              value: /tmp
+            - name: RESTIC_CACHE_DIR
+              value: /tmp/restic-cache
+            # Only the opt-in Ingress overlay sets TRUST_PROXY=true: the base
+            # service is a ClusterIP not exposed through a trusted proxy.
+            - name: TRUST_PROXY
+              value: "false"
           livenessProbe:
             httpGet:
               path: /api/status
@@ -54,7 +81,17 @@ spec:
           volumeMounts:
             - mountPath: /data
               name: data
+            - mountPath: /tmp
+              name: tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: restic-secrets-manager
+        # tmpfs for the temporary restic working directories: plaintext
+        # secrets never reach the node's writable layer. The sizeLimit counts
+        # against the container memory limit (256Mi leaves headroom in 500Mi);
+        # raise both when a repository cache needs more than that.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi

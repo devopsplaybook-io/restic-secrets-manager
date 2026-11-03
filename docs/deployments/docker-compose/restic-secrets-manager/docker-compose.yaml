@@ -4,12 +4,29 @@ services:
     container_name: restic-secrets-manager
     ports:
       - "8080:8080"
+    # Fixed uid/gid matching the image USER. The ./data bind mount must be
+    # writable by this user (see the README before the first start).
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      # Plaintext restic working directories and the disposable restic cache
+      # stay in memory and never reach the host disk.
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
     environment:
       # Optional: set a strong random key (e.g. `openssl rand -base64 48`) to
       # manage the JWT signing key yourself. When empty, a key is generated
       # once and stored in the database. Changing the key invalidates all
       # issued sessions.
       - JWT_KEY=${JWT_KEY:-}
+      - TMP_DIR=/tmp
+      - RESTIC_CACHE_DIR=/tmp/restic-cache
+      # Keep false unless the container sits behind a trusted proxy that
+      # overwrites X-Forwarded-For.
+      - TRUST_PROXY=${TRUST_PROXY:-false}
     volumes:
       - ./data:/data
     restart: unless-stopped

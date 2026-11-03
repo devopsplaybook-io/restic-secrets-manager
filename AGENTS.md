@@ -122,3 +122,12 @@ Refer to the **After implementation** workflow above for the standard validation
 
 - **Server update**: Run `npm run test`, `npm run build`, and `npm run lint` in `restic-secrets-manager-server/`. Also update unit tests: remove unused tests and add new coverage for new code.
 - **Web update**: Run `npm run build` (or `npm run generate`) in `restic-secrets-manager-web/`
+- **Container and security checklist** (changes touching the image, deployment manifests, HTTP layer, restic invocations or error handling):
+  - [ ] Non-root runtime: image `USER` and manifests use uid/gid `10001`; `runAsNonRoot`, dropped capabilities, `allowPrivilegeEscalation: false`.
+  - [ ] Read-only root filesystem; `TMP_DIR` and `RESTIC_CACHE_DIR` on a memory-backed tmpfs/`emptyDir`, never node disk.
+  - [ ] `entrypoint.sh` keeps `exec` so SIGTERM reaches Node.
+  - [ ] restic children get the minimal allowlisted environment, never `process.env`.
+  - [ ] Security headers (`Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`) still sent; secret responses excluded from compression.
+  - [ ] `TRUST_PROXY=true` only behind a trusted proxy/ingress that overwrites `X-Forwarded-For`.
+  - [ ] Unexpected sync errors return a generic 500 with a correlation id (no raw internal message).
+  - [ ] No new OpenTelemetry metric without explicit approval.

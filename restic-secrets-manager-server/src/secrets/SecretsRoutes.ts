@@ -23,6 +23,13 @@ import { ProjectWriteLocksRun } from "../restic/SyncLocks";
 const PARTIAL_UPDATE_ATTEMPTS = 3;
 
 /**
+ * Secret responses are never compressed: it is cheap defense in depth
+ * against compression side channels (BREACH) on a secrets store, and the
+ * payloads are small enough that compression brings no measurable benefit.
+ */
+const SECRET_ROUTE_OPTIONS = { compress: false as const };
+
+/**
  * Secrets routes, registered under the /api/projects prefix.
  * All routes require access to the project (admin or granted user).
  *
@@ -38,6 +45,7 @@ export class SecretsRoutes {
     //
     fastify.get<{ Params: { id: string } }>(
       "/:id/secrets",
+      SECRET_ROUTE_OPTIONS,
       async (req, res) => {
         if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
           return;
@@ -58,7 +66,7 @@ export class SecretsRoutes {
     fastify.get<{
       Params: { id: string; name: string };
       Querystring: { format?: string };
-    }>("/:id/secrets/by-name/:name/export", async (req, res) => {
+    }>("/:id/secrets/by-name/:name/export", SECRET_ROUTE_OPTIONS, async (req, res) => {
       if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
         return;
       }
@@ -103,7 +111,7 @@ export class SecretsRoutes {
     fastify.post<{
       Params: { id: string };
       Body: { name?: string; data?: SecretData };
-    }>("/:id/secrets", async (req, res) => {
+    }>("/:id/secrets", SECRET_ROUTE_OPTIONS, async (req, res) => {
       if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
         return;
       }
@@ -158,7 +166,7 @@ export class SecretsRoutes {
     fastify.put<{
       Params: { id: string; secretId: string };
       Body: { name?: string; data?: SecretData; version?: unknown };
-    }>("/:id/secrets/:secretId", async (req, res) => {
+    }>("/:id/secrets/:secretId", SECRET_ROUTE_OPTIONS, async (req, res) => {
       if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
         return;
       }
@@ -270,7 +278,7 @@ export class SecretsRoutes {
         value?: unknown;
         version?: unknown;
       };
-    }>("/:id/secrets/:secretId/keys", async (req, res) => {
+    }>("/:id/secrets/:secretId/keys", SECRET_ROUTE_OPTIONS, async (req, res) => {
       if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
         return;
       }
@@ -364,6 +372,7 @@ export class SecretsRoutes {
     //
     fastify.delete<{ Params: { id: string; secretId: string } }>(
       "/:id/secrets/:secretId",
+      SECRET_ROUTE_OPTIONS,
       async (req, res) => {
         if (!(await ProjectAccessEnsure(req, res, req.params.id))) {
           return;

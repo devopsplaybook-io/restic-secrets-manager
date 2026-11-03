@@ -1,4 +1,5 @@
 import { AuthMustBeAdmin } from "@devopsplaybook.io/common-utils";
+import { randomUUID } from "crypto";
 import { FastifyInstance } from "fastify";
 import { Project } from "../model/Project";
 import { OTelLogger, OTelRequestSpan } from "../OTelContext";
@@ -240,21 +241,15 @@ export class ProjectsRoutes {
 
     //
     fastify.get<{ Params: { id: string } }>("/:id", async (req, res) => {
-      const user = await ProjectAccessGetUser(req, res);
+      const user = await ProjectAccessEnsure(req, res, req.params.id);
       if (!user) {
         return;
       }
-      const project = await ProjectsDataGet(
-        OTelRequestSpan(req),
-        req.params.id,
-      );
+      const span = OTelRequestSpan(req);
+      const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (!(await ProjectAccessEnsure(req, res, project.id))) {
-        return;
-      }
-      const span = OTelRequestSpan(req);
       const secretCount = await SecretsDataCountForProject(span, project.id);
       return res.status(200).send({
         project: {
@@ -328,7 +323,7 @@ export class ProjectsRoutes {
       Params: { id: string };
       Body: { snapshotId?: unknown; contentHash?: unknown };
     }>("/:id/pull", async (req, res) => {
-      const user = await ProjectAccessGetUser(req, res);
+      const user = await ProjectAccessEnsure(req, res, req.params.id);
       if (!user) {
         return;
       }
@@ -336,9 +331,6 @@ export class ProjectsRoutes {
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
-      }
-      if (!(await ProjectAccessEnsure(req, res, project.id))) {
-        return;
       }
       const snapshotId = req.body?.snapshotId;
       if (typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
@@ -366,13 +358,13 @@ export class ProjectsRoutes {
         );
         return res.status(200).send(result);
       } catch (e) {
-        return sendSyncError(res, e);
+        return sendSyncError(req, res, e);
       }
     });
 
     //
     fastify.post<{ Params: { id: string } }>("/:id/push", async (req, res) => {
-      const user = await ProjectAccessGetUser(req, res);
+      const user = await ProjectAccessEnsure(req, res, req.params.id);
       if (!user) {
         return;
       }
@@ -380,9 +372,6 @@ export class ProjectsRoutes {
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
-      }
-      if (!(await ProjectAccessEnsure(req, res, project.id))) {
-        return;
       }
       try {
         const result = await ResticSyncPush(
@@ -409,14 +398,14 @@ export class ProjectsRoutes {
             user.name ?? "unknown",
           );
         }
-        return sendSyncError(res, e);
+        return sendSyncError(req, res, e);
       }
     });
 
     // Synchronization status of a project: local modifications and
     // remote changes to pull (restic is invoked to check the repository)
     fastify.get<{ Params: { id: string } }>("/:id/status", async (req, res) => {
-      const user = await ProjectAccessGetUser(req, res);
+      const user = await ProjectAccessEnsure(req, res, req.params.id);
       if (!user) {
         return;
       }
@@ -425,16 +414,13 @@ export class ProjectsRoutes {
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (!(await ProjectAccessEnsure(req, res, project.id))) {
-        return;
-      }
       try {
         const result = await SyncStatusCacheGet(span, project, config, {
           signal: RequestAbortSignal(req.raw, res.raw),
         });
         return res.status(200).send(result);
       } catch (e) {
-        return sendSyncError(res, e);
+        return sendSyncError(req, res, e);
       }
     });
 
@@ -446,7 +432,7 @@ export class ProjectsRoutes {
       Params: { id: string };
       Querystring: { limit?: string; before?: string };
     }>("/:id/snapshots", async (req, res) => {
-      const user = await ProjectAccessGetUser(req, res);
+      const user = await ProjectAccessEnsure(req, res, req.params.id);
       if (!user) {
         return;
       }
@@ -455,14 +441,11 @@ export class ProjectsRoutes {
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      if (!(await ProjectAccessEnsure(req, res, project.id))) {
-        return;
-      }
       let pageRequest: ReturnType<typeof parseSnapshotPageQuery>;
       try {
         pageRequest = parseSnapshotPageQuery(req.query || {});
       } catch (e) {
-        return sendSyncError(res, e);
+        return sendSyncError(req, res, e);
       }
       try {
         const snapshots = await ResticSyncListSnapshots(
@@ -480,7 +463,7 @@ export class ProjectsRoutes {
             ),
           );
       } catch (e) {
-        return sendSyncError(res, e);
+        return sendSyncError(req, res, e);
       }
     });
 
@@ -490,7 +473,7 @@ export class ProjectsRoutes {
       Body: { contentHash?: unknown };
     }>("/:id/snapshots/:snapshotId/restore",
       async (req, res) => {
-        const user = await ProjectAccessGetUser(req, res);
+        const user = await ProjectAccessEnsure(req, res, req.params.id);
         if (!user) {
           return;
         }
@@ -498,9 +481,6 @@ export class ProjectsRoutes {
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
-        }
-        if (!(await ProjectAccessEnsure(req, res, project.id))) {
-          return;
         }
         try {
           const result = await ResticSyncRestoreSnapshot(
@@ -521,7 +501,7 @@ export class ProjectsRoutes {
           );
           return res.status(200).send(result);
         } catch (e) {
-          return sendSyncError(res, e);
+          return sendSyncError(req, res, e);
         }
       },
     );
@@ -531,7 +511,7 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/preview/pull",
       async (req, res) => {
-        const user = await ProjectAccessGetUser(req, res);
+        const user = await ProjectAccessEnsure(req, res, req.params.id);
         if (!user) {
           return;
         }
@@ -539,9 +519,6 @@ export class ProjectsRoutes {
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
-        }
-        if (!(await ProjectAccessEnsure(req, res, project.id))) {
-          return;
         }
         try {
           const preview = await ResticSyncPreviewPull(
@@ -553,7 +530,7 @@ export class ProjectsRoutes {
           );
           return res.status(200).send({ preview });
         } catch (e) {
-          return sendSyncError(res, e);
+          return sendSyncError(req, res, e);
         }
       },
     );
@@ -563,7 +540,7 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string } }>(
       "/:id/preview/discard",
       async (req, res) => {
-        const user = await ProjectAccessGetUser(req, res);
+        const user = await ProjectAccessEnsure(req, res, req.params.id);
         if (!user) {
           return;
         }
@@ -571,9 +548,6 @@ export class ProjectsRoutes {
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
-        }
-        if (!(await ProjectAccessEnsure(req, res, project.id))) {
-          return;
         }
         try {
           const preview = await ResticSyncPreviewDiscardLocalChanges(
@@ -585,7 +559,7 @@ export class ProjectsRoutes {
           );
           return res.status(200).send({ preview });
         } catch (e) {
-          return sendSyncError(res, e);
+          return sendSyncError(req, res, e);
         }
       },
     );
@@ -595,7 +569,7 @@ export class ProjectsRoutes {
     fastify.get<{ Params: { id: string; snapshotId: string } }>(
       "/:id/preview/snapshots/:snapshotId",
       async (req, res) => {
-        const user = await ProjectAccessGetUser(req, res);
+        const user = await ProjectAccessEnsure(req, res, req.params.id);
         if (!user) {
           return;
         }
@@ -603,9 +577,6 @@ export class ProjectsRoutes {
         const project = await ProjectsDataGet(span, req.params.id);
         if (!project) {
           return res.status(404).send({ error: "Project Not Found" });
-        }
-        if (!(await ProjectAccessEnsure(req, res, project.id))) {
-          return;
         }
         try {
           const preview = await ResticSyncPreviewRestoreSnapshot(
@@ -618,7 +589,7 @@ export class ProjectsRoutes {
           );
           return res.status(200).send({ preview });
         } catch (e) {
-          return sendSyncError(res, e);
+          return sendSyncError(req, res, e);
         }
       },
     );
@@ -629,7 +600,7 @@ export class ProjectsRoutes {
       Params: { id: string };
       Body: { contentHash?: unknown };
     }>("/:id/discard", async (req, res) => {
-      const user = await ProjectAccessGetUser(req, res);
+      const user = await ProjectAccessEnsure(req, res, req.params.id);
       if (!user) {
         return;
       }
@@ -637,9 +608,6 @@ export class ProjectsRoutes {
       const project = await ProjectsDataGet(span, req.params.id);
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
-      }
-      if (!(await ProjectAccessEnsure(req, res, project.id))) {
-        return;
       }
       try {
         const result = await ResticSyncDiscardLocalChanges(
@@ -659,21 +627,35 @@ export class ProjectsRoutes {
         );
         return res.status(200).send(result);
       } catch (e) {
-        return sendSyncError(res, e);
+        return sendSyncError(req, res, e);
       }
     });
   }
 }
 
 /** Maps restic synchronization errors to transport responses. */
-function sendSyncError(res: any, e: unknown) {
+function sendSyncError(req: any, res: any, e: unknown) {
   if (e instanceof ResticSyncError) {
     return res
       .status(e.statusCode)
       .send(e.code ? { error: e.message, code: e.code } : { error: e.message });
   }
+  // Never return a raw internal message: log the detail (stack only, no
+  // request body, credentials or secret payloads) with a correlation id and
+  // answer with a generic error carrying that id.
+  const correlationId =
+    req?.id !== undefined && req?.id !== null
+      ? String(req.id)
+      : randomUUID();
+  logger.error(
+    `Unexpected synchronization error [${correlationId}]: ${
+      e instanceof Error ? e.stack || e.message : String(e)
+    }`,
+  );
   return res.status(500).send({
-    error: e instanceof Error ? e.message : "Internal Error",
+    error: "Internal Server Error",
+    code: "INTERNAL_ERROR",
+    correlationId,
   });
 }
 

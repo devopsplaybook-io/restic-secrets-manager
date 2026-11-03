@@ -1,4 +1,5 @@
 import * as childProcess from "child_process";
+import * as os from "os";
 import { Project } from "../model/Project";
 import { ResticSyncError } from "./ResticErrors";
 import {
@@ -41,6 +42,68 @@ export type ResticRunner = (
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 5_000;
+
+/**
+ * Variables a restic process may inherit from the server environment:
+ * process basics, proxy and CA configuration. Every `AWS_*` and `RESTIC_*`
+ * variable is also kept so cache, proxy and credential settings configured
+ * at the image level keep working. Everything else (JWT key, database and
+ * notification credentials, ...) must never reach a restic child.
+ */
+const RESTIC_ENV_ALLOWLIST = new Set([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+]);
+
+const DEFAULT_PATH =
+  "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/**
+ * Minimal environment for restic invocations: an allowlist of process,
+ * proxy and CA variables plus the configured `AWS_*`/`RESTIC_*` settings,
+ * overwritten by the project credentials. The server environment is never
+ * spread wholesale, so unrelated secrets cannot leak to a child process.
+ */
+export function buildResticEnv(
+  project: Project,
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (
+      RESTIC_ENV_ALLOWLIST.has(key) ||
+      key.startsWith("AWS_") ||
+      key.startsWith("RESTIC_")
+    ) {
+      env[key] = value;
+    }
+  }
+  if (!env.PATH) {
+    env.PATH = DEFAULT_PATH;
+  }
+  if (!env.HOME) {
+    env.HOME = os.tmpdir();
+  }
+  env.AWS_ACCESS_KEY_ID = project.s3AccessKeyId;
+  env.AWS_SECRET_ACCESS_KEY = project.s3SecretAccessKey;
+  env.RESTIC_PASSWORD = project.resticPassword;
+  env.RESTIC_REPOSITORY = project.repositoryUrl();
+  return env;
+}
 
 /**
  * Snapshot listings are parsed as a whole and served by the history and
@@ -308,13 +371,7 @@ export class ResticClient {
 
   /** Environment for restic invocations (credentials never logged). */
   public env(): NodeJS.ProcessEnv {
-    return {
-      ...process.env,
-      AWS_ACCESS_KEY_ID: this.project.s3AccessKeyId,
-      AWS_SECRET_ACCESS_KEY: this.project.s3SecretAccessKey,
-      RESTIC_PASSWORD: this.project.resticPassword,
-      RESTIC_REPOSITORY: this.project.repositoryUrl(),
-    };
+    return buildResticEnv(this.project);
   }
 
   /** Base arguments shared by all restic invocations. */
