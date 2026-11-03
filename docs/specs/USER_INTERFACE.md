@@ -4,6 +4,7 @@
 
 - [x] Single-page application (Nuxt SPA, SSR disabled), installable as a PWA
 - [x] Top navigation bar with the application name, links (Projects, API Tokens when authenticated, Users for admins), theme toggle and logout
+- [x] Only the current settings link is highlighted: `/settings/tokens` and `/settings/users` are compared by exact path, so a settings sub-page never highlights both entries
 - [x] Dark and light themes, persisted in localStorage with OS preference fallback
 
 ## Pages
@@ -65,7 +66,7 @@
 
 ## Project detail (secrets)
 
-- [x] Opening a project loads the project and its secrets concurrently, so the page does not wait for two sequential round trips
+- [x] Opening a project shows a loading state, loads the project first and then its secrets, and a failed project load (403, 404 or a network error) shows an error state with the message, a Retry action and a Back-to-projects action instead of a blank page; later operation errors (copy, delete, save) still show in an inline banner
 
 - [x] A filter field above the secrets table narrows the list by secret name or key name (case-insensitive substring); a "No secrets match the filter." state is shown when nothing matches and opening a filtered secret still shows all its keys
 - [x] Each secret row has a "..." action menu (Edit, Duplicate, Rename, Delete) replacing the former inline buttons

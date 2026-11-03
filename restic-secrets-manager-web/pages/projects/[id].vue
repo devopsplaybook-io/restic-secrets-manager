@@ -1,5 +1,29 @@
 <template>
-  <div v-if="project">
+  <div v-if="loading" class="empty-state" data-testid="project-loading">
+    <i class="bi bi-hourglass-split"/>
+    <p>Loading project…</p>
+  </div>
+  <div
+    v-else-if="!project"
+    class="empty-state"
+    data-testid="project-load-error"
+  >
+    <i class="bi bi-exclamation-triangle-fill"/>
+    <p class="error-message">{{ error || "Unable to load the project" }}</p>
+    <div class="page-state-actions">
+      <button data-testid="retry-project-load" @click="loadProjectPage">
+        <i class="bi bi-arrow-clockwise"/> Retry
+      </button>
+      <button
+        class="secondary"
+        data-testid="back-to-projects"
+        @click="router.push('/')"
+      >
+        <i class="bi bi-arrow-left"/> Back to projects
+      </button>
+    </div>
+  </div>
+  <div v-else>
     <div class="page-header">
       <div>
         <h1><i class="bi bi-box-seam"/> {{ project.name }}</h1>
@@ -407,6 +431,7 @@ const router = useRouter();
 const project = ref(null);
 const secrets = ref([]);
 const error = ref("");
+const loading = ref(true);
 
 // The filter only narrows the secret list (by secret name or by any key
 // name); the secret editor always shows every key of the opened secret
@@ -467,10 +492,11 @@ const deleting = ref(false);
 onMounted(async () => {
   authStore.init();
   if (!authStore.isAuthenticated) {
+    loading.value = false;
     router.push("/login");
     return;
   }
-  await Promise.all([loadProject(), loadSecrets()]);
+  await loadProjectPage();
   offerDraftRestore();
 });
 
@@ -500,6 +526,20 @@ function captureUnsavedEdits() {
 const unregisterUnsavedEditsCapture = registerUnsavedEditsCapture(
   captureUnsavedEdits,
 );
+
+async function loadProjectPage() {
+  loading.value = true;
+  error.value = "";
+  try {
+    await loadProject();
+    if (!project.value) {
+      return;
+    }
+    await loadSecrets();
+  } finally {
+    loading.value = false;
+  }
+}
 
 async function loadProject() {
   try {
@@ -1206,6 +1246,14 @@ async function executeCopyKey() {
   grid-template-columns: 1fr auto;
   align-items: center;
   margin-bottom: var(--space-lg);
+}
+
+.page-state-actions {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
 }
 
 .page-header h1 i {

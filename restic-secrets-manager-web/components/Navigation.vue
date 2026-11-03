@@ -18,7 +18,7 @@
       <li v-if="authStore.isAuthenticated">
         <NuxtLink
           to="/settings/tokens"
-          :class="activeRoute == '/settings' ? 'active' : 'inactive'"
+          :class="activeRoute == '/settings/tokens' ? 'active' : 'inactive'"
           ><i class="bi bi-key"/>
           <span class="nav-label">API Tokens</span></NuxtLink
         >
@@ -26,7 +26,7 @@
       <li v-if="authStore.isAdmin">
         <NuxtLink
           to="/settings/users"
-          :class="activeRoute == '/settings' ? 'active' : 'inactive'"
+          :class="activeRoute == '/settings/users' ? 'active' : 'inactive'"
           ><i class="bi bi-people"/>
           <span class="nav-label">Users</span></NuxtLink
         >
@@ -66,10 +66,7 @@ const effectiveTheme = computed(() => {
   return theme.value;
 });
 
-const activeRoute = computed(() => {
-  const segments = route.fullPath.split("?")[0].split("/");
-  return segments.length > 1 ? `/${segments[1]}` : "/";
-});
+const activeRoute = computed(() => route.path);
 
 function logout() {
   authStore.logout();
