@@ -74,6 +74,21 @@ client-supplied `X-Forwarded-For` headers.
   SIGTERM, then SIGKILL after `RESTIC_KILL_GRACE_MS` (default 5 s); the API
   answers `504` and the project lock is released. A client disconnect
   aborts its operation (answer `499` when the response can still be sent).
+  Status and snapshot-history reads use the same mechanism. Snapshot
+  listings are additionally capped at 10 MB of output and fail explicitly
+  instead of returning truncated data.
+- **Status endpoint bounds**: `GET /api/projects/status` answers within
+  `SYNC_STATUS_REQUEST_DEADLINE_MS` (default 5 s): projects whose status is
+  not ready are returned with `{error:true}`. Results stay fresh for
+  `SYNC_STATUS_CACHE_TTL_MS` (default 30 s) and stale entries are served
+  while one background refresh runs; at most three status runs execute at a
+  time and at most `SYNC_STATUS_MAX_WAITERS` (default 100) requests wait for
+  a slot before the API answers `503 STATUS_QUEUE_FULL`.
+- **Snapshot history paging**: `GET /api/projects/:id/snapshots` returns
+  `limit` snapshots (default 50, maximum 200) and a `before` cursor. restic
+  has no native pagination, so each page parses the full listing (within the
+  10 MB cap); very large histories therefore still cost one listing per
+  page — clients normally fetch pages one after the other.
 - **Temp files**: restic works in a temporary directory on the container
   filesystem (`TMP_DIR`, default `/tmp`). Working directories are created
   with mode `0700` and the secret files inside with mode `0600`; stale
@@ -83,9 +98,10 @@ client-supplied `X-Forwarded-For` headers.
   plaintext never reaches persistent disk. Point `TMP_DIR` at a sized
   volume when the temp space must be bounded or shared independently.
 - **Resource limits**: restic work is bounded — sync operations are
-  serialized per project, every invocation has a timeout, and the status
-  cache caps concurrent restic checks — so the recommended 500m CPU /
-  500Mi memory limits accommodate typical usage.
+  serialized per project, every invocation has a timeout, the status cache
+  limits concurrent restic checks and caps queued waiters, and snapshot
+  listings are capped at 10 MB — so the recommended 500m CPU / 500Mi memory
+  limits accommodate typical usage.
 - **Security context**: the provided manifests do not set a
   `securityContext`. On hardened clusters, run the container as non-root
   with dropped capabilities (for example `runAsNonRoot: true` and

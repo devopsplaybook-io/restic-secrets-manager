@@ -61,6 +61,13 @@
         <p>No snapshots in this repository yet. Push secrets to create one.</p>
       </div>
 
+      <div v-if="hasMore" class="load-more">
+        <button class="secondary" :disabled="loadingMore" @click="loadMore">
+          <i class="bi bi-arrow-down-circle"/>
+          {{ loadingMore ? "Loading…" : "Load older snapshots" }}
+        </button>
+      </div>
+
       <footer>
         <button class="secondary" @click="close">Close</button>
       </footer>
@@ -70,6 +77,10 @@
 
 <script setup>
 import api from "../utils/api";
+import {
+  mergeSnapshotPages,
+  snapshotHistoryParams,
+} from "../utils/snapshot-history";
 import { pusherLabel, shouldRefreshPreview } from "../utils/sync-preview";
 
 const props = defineProps({
@@ -80,6 +91,9 @@ const emit = defineEmits(["closed", "restored"]);
 const modal = useModalDialog("history-modal");
 const snapshots = ref([]);
 const loading = ref(true);
+const loadingMore = ref(false);
+const hasMore = ref(false);
+const nextBefore = ref(null);
 const error = ref("");
 const confirming = ref("");
 const restoring = ref(false);
@@ -105,13 +119,50 @@ function onClosed() {
 async function loadSnapshots() {
   loading.value = true;
   error.value = "";
+  hasMore.value = false;
+  nextBefore.value = null;
   try {
-    const res = await api.get(`/projects/${props.project.id}/snapshots`);
-    snapshots.value = res.data.snapshots || [];
-  } catch (e) {
-    error.value = e.response?.data?.error || "Unable to load the snapshot history";
+    await fetchPage(undefined, false);
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMore() {
+  if (!hasMore.value || loadingMore.value) {
+    return;
+  }
+  loadingMore.value = true;
+  error.value = "";
+  try {
+    await fetchPage(nextBefore.value, true);
+  } finally {
+    loadingMore.value = false;
+  }
+}
+
+async function fetchPage(before, append) {
+  try {
+    const res = await api.get(`/projects/${props.project.id}/snapshots`, {
+      params: snapshotHistoryParams(before),
+    });
+    const page = mergeSnapshotPages(
+      append ? snapshots.value : [],
+      res.data.snapshots || [],
+      res.data.hasMore,
+      res.data.nextBefore,
+    );
+    snapshots.value = page.snapshots;
+    hasMore.value = page.hasMore;
+    nextBefore.value = page.nextBefore;
+  } catch (e) {
+    error.value =
+      e.response?.data?.error || "Unable to load the snapshot history";
+    if (!append) {
+      snapshots.value = [];
+      hasMore.value = false;
+      nextBefore.value = null;
+    }
   }
 }
 
@@ -213,6 +264,12 @@ function shortId(id) {
   grid-template-columns: auto 1fr;
   grid-template-areas: "marker content";
   column-gap: var(--space-sm);
+}
+
+.load-more {
+  display: grid;
+  justify-items: center;
+  margin-top: var(--space-md);
 }
 
 .timeline-marker {

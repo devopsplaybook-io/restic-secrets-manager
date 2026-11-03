@@ -43,7 +43,11 @@ Each project is defined with the settings required to connect to a restic reposi
 
 - [x] Pull, push, snapshot restore, discard and their previews are serialized per project: an in-process queue wraps the whole operation, and the short database sections (compare-and-swap, replacement, sync state) take a PostgreSQL advisory lock when `DATABASE_TYPE=postgres`, so independent replicas cannot interleave them; SQLite deployments stay single-replica
 - [x] Every restic invocation of a synchronization (snapshots, restore, backup, init) is bounded by a configurable timeout (`RESTIC_TIMEOUT_*`); on expiry the process is terminated (SIGTERM, then SIGKILL after `RESTIC_KILL_GRACE_MS`) and the API answers HTTP 504
-- [x] A client disconnect aborts the restic process of its request; the project lock and status-cache slots are released on success, error and timeout
+- [x] A client disconnect aborts the restic process of its request; the project lock and status-cache slots are released on success, error and timeout, and an aborted status run is never cached
+- [x] The project status list is served from a per-project stale-while-revalidate cache (`SYNC_STATUS_CACHE_TTL_MS`, default 30 s) with one run per project at a time and at most three concurrent runs per instance
+- [x] `GET /api/projects/status` answers within `SYNC_STATUS_REQUEST_DEADLINE_MS` (default 5 s): projects not ready in time keep the existing `{error:true}` marker, so the response is partial instead of unbounded
+- [x] Waiting status requests are capped by `SYNC_STATUS_MAX_WAITERS` (default 100); excess requests answer HTTP 503 `STATUS_QUEUE_FULL`
+- [x] Snapshot history is paginated with `limit` (default 50, maximum 200) and a `before` cursor, answering `{snapshots, hasMore, nextBefore}`; invalid input answers HTTP 400
 - [x] Snapshot recency is compared as parsed timestamps (epoch milliseconds, so timezone offsets and sub-second precision count), not as strings; an unparsable time sorts as older, and the snapshot id breaks exact ties
 - [x] Project deletion takes the project write lock, so it cannot interleave with a synchronization or a secret write; the deletion and its secret cascade remain one transaction, and a request that lost the race answers 404
 

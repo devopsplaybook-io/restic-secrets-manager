@@ -969,6 +969,30 @@ describe("ResticSyncStatus", () => {
     expect(status.needsPull).toBe(false);
     expect(status.remoteLatestSnapshotId).toBe("");
   });
+
+  it("should forward the abort signal to the restic client", async () => {
+    ResticClientMock.mockClear();
+    mockClient();
+    const controller = new AbortController();
+    const dataApi = {
+      SecretsDataCountForProject: jest.fn().mockResolvedValue(0),
+    };
+
+    await ResticSyncStatus(
+      span(),
+      testConfig(),
+      makeProject(),
+      dataApi,
+      controller.signal,
+    );
+
+    expect(ResticClientMock).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      expect.anything(),
+      controller.signal,
+    );
+  });
 });
 
 describe("ResticSyncTestConnection", () => {

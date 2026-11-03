@@ -47,6 +47,10 @@ import {
   SyncStatusCacheGet,
   SyncStatusCacheInvalidate,
 } from "../restic/SyncStatusCache";
+import {
+  paginateSnapshotHistory,
+  parseSnapshotPageQuery,
+} from "../restic/SnapshotHistory";
 import { RequestAbortSignal } from "../restic/RequestAbort";
 import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 import type { Config } from "../Config";
@@ -95,7 +99,9 @@ export class ProjectsRoutes {
     });
 
     // Synchronization status of all the projects visible to the user, in
-    // one call (each status is served by the short-TTL cache)
+    // one call. Statuses are served by the stale-while-revalidate cache and
+    // the fan-out is bounded: checks still running at the deadline answer
+    // `{error:true}` and keep warming the cache in the background.
     fastify.get("/status", async (req, res) => {
       const user = await ProjectAccessGetUser(req, res);
       if (!user) {
@@ -107,22 +113,34 @@ export class ProjectsRoutes {
         user,
         projects.map((project) => project.id),
       );
+      const visible = projects.filter((project) =>
+        visibleIds.has(project.id),
+      );
       const statuses: Record<string, unknown> = {};
-      await Promise.all(
-        projects
-          .filter((project) => visibleIds.has(project.id))
-          .map(async (project) => {
+      const signal = RequestAbortSignal(req.raw, res.raw);
+      const fanOut = (async () => {
+        await Promise.all(
+          visible.map(async (project) => {
             try {
               statuses[project.id] = await SyncStatusCacheGet(
                 span,
                 project,
                 config,
+                { signal },
               );
             } catch {
               statuses[project.id] = { error: true };
             }
           }),
-      );
+        );
+      })();
+      await withDeadline(fanOut, statusDeadlineMs(config));
+      // Backward-compatible error marker for the checks still running.
+      for (const project of visible) {
+        if (!(project.id in statuses)) {
+          statuses[project.id] = { error: true };
+        }
+      }
       return res.status(200).send({ statuses });
     });
 
@@ -411,41 +429,60 @@ export class ProjectsRoutes {
         return;
       }
       try {
-        const result = await SyncStatusCacheGet(span, project, config);
+        const result = await SyncStatusCacheGet(span, project, config, {
+          signal: RequestAbortSignal(req.raw, res.raw),
+        });
         return res.status(200).send(result);
       } catch (e) {
         return sendSyncError(res, e);
       }
     });
 
-    // Snapshot history of the project repository, most recent first
-    fastify.get<{ Params: { id: string } }>(
-      "/:id/snapshots",
-      async (req, res) => {
-        const user = await ProjectAccessGetUser(req, res);
-        if (!user) {
-          return;
-        }
-        const span = OTelRequestSpan(req);
-        const project = await ProjectsDataGet(span, req.params.id);
-        if (!project) {
-          return res.status(404).send({ error: "Project Not Found" });
-        }
-        if (!(await ProjectAccessEnsure(req, res, project.id))) {
-          return;
-        }
-        try {
-          const snapshots = await ResticSyncListSnapshots(
-            project,
-            config,
-            RequestAbortSignal(req.raw, res.raw),
+    // Snapshot history of the project repository, most recent first.
+    // Paginated: `limit` (default 50, max 200) and a `before` snapshot-id
+    // cursor; restic cannot filter the listing, so the full list is parsed
+    // and paged server-side.
+    fastify.get<{
+      Params: { id: string };
+      Querystring: { limit?: string; before?: string };
+    }>("/:id/snapshots", async (req, res) => {
+      const user = await ProjectAccessGetUser(req, res);
+      if (!user) {
+        return;
+      }
+      const span = OTelRequestSpan(req);
+      const project = await ProjectsDataGet(span, req.params.id);
+      if (!project) {
+        return res.status(404).send({ error: "Project Not Found" });
+      }
+      if (!(await ProjectAccessEnsure(req, res, project.id))) {
+        return;
+      }
+      let pageRequest: ReturnType<typeof parseSnapshotPageQuery>;
+      try {
+        pageRequest = parseSnapshotPageQuery(req.query || {});
+      } catch (e) {
+        return sendSyncError(res, e);
+      }
+      try {
+        const snapshots = await ResticSyncListSnapshots(
+          project,
+          config,
+          RequestAbortSignal(req.raw, res.raw),
+        );
+        return res
+          .status(200)
+          .send(
+            paginateSnapshotHistory(
+              snapshots,
+              pageRequest.limit,
+              pageRequest.before,
+            ),
           );
-          return res.status(200).send({ snapshots });
-        } catch (e) {
-          return sendSyncError(res, e);
-        }
-      },
-    );
+      } catch (e) {
+        return sendSyncError(res, e);
+      }
+    });
 
     // Restore an arbitrary snapshot of the history as the project secrets
     fastify.post<{
@@ -637,6 +674,49 @@ function sendSyncError(res: any, e: unknown) {
   }
   return res.status(500).send({
     error: e instanceof Error ? e.message : "Internal Error",
+  });
+}
+
+const DEFAULT_STATUS_REQUEST_DEADLINE_MS = 5_000;
+
+function statusDeadlineMs(config: Config): number {
+  const value = config?.SYNC_STATUS_REQUEST_DEADLINE_MS;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_STATUS_REQUEST_DEADLINE_MS;
+}
+
+/**
+ * Resolves when the work settles or when the deadline expires, whichever
+ * comes first. The work itself is not cancelled: unwinding the fan-out
+ * would abort the status checks that are still warming the cache.
+ */
+function withDeadline<T>(work: Promise<T>, deadlineMs: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, deadlineMs);
+    timer.unref?.();
+    work.then(
+      (value) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        }
+      },
+      () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      },
+    );
   });
 }
 

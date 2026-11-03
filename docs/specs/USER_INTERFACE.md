@@ -56,6 +56,7 @@
 ## Snapshot history
 
 - [x] The snapshot history shows a vertical timeline of the repository snapshots (time and short id, most recent first, latest highlighted)
+- [x] The history loads 50 snapshots at first and offers a "Load older snapshots" action while more remain; older pages are appended without duplicates and the action disappears at the end of the history
 - [x] Each timeline entry shows who pushed the snapshot: the `pushed-by` attribution, falling back to the user and host reported by restic, or "unknown pusher" for older snapshots
 - [x] Each timeline entry offers a Restore action, confirmed before the snapshot replaces the project secrets
 - [x] The restore confirmation shows a preview of the changes the restore would apply (values masked) and only executes after confirmation
@@ -63,6 +64,8 @@
 - [x] The result of a restore is displayed in the history dialog and the project cards are refreshed
 
 ## Project detail (secrets)
+
+- [x] Opening a project loads the project and its secrets concurrently, so the page does not wait for two sequential round trips
 
 - [x] A filter field above the secrets table narrows the list by secret name or key name (case-insensitive substring); a "No secrets match the filter." state is shown when nothing matches and opening a filtered secret still shows all its keys
 - [x] Each secret row has a "..." action menu (Edit, Duplicate, Rename, Delete) replacing the former inline buttons

@@ -16,6 +16,8 @@ export interface ResticCommandResult {
   timedOut?: boolean;
   /** True when the invocation was killed because the request aborted. */
   aborted?: boolean;
+  /** True when the output exceeded its cap and the invocation was stopped. */
+  truncated?: boolean;
 }
 
 export interface ResticRunOptions {
@@ -25,6 +27,8 @@ export interface ResticRunOptions {
   killGraceMs?: number;
   /** Aborts (SIGTERM then SIGKILL) the invocation when the signal fires. */
   signal?: AbortSignal;
+  /** Maximum bytes buffered per output stream before the run is stopped. */
+  maxOutputBytes?: number;
 }
 
 export type ResticRunner = (
@@ -37,6 +41,23 @@ export type ResticRunner = (
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 5_000;
+
+/**
+ * Snapshot listings are parsed as a whole and served by the history and
+ * status hot paths: their output is capped lower than other operations so a
+ * huge repository cannot pressure the container's memory limit. Exceeding
+ * the cap is reported as an error, never as truncated data.
+ */
+export const MAX_SNAPSHOTS_OUTPUT_BYTES = 10 * 1024 * 1024;
+
+const SNAPSHOT_OUTPUT_LIMIT_MESSAGE =
+  `restic snapshot listing output exceeded the ${
+    MAX_SNAPSHOTS_OUTPUT_BYTES / (1024 * 1024)
+  } MB limit; reduce the repository history or raise MAX_SNAPSHOTS_OUTPUT_BYTES`;
+
+function snapshotOutputLimitError(): Error {
+  return new Error(SNAPSHOT_OUTPUT_LIMIT_MESSAGE);
+}
 
 /**
  * Default runner: spawns the restic binary and bounds it in time. On timeout
@@ -63,8 +84,13 @@ export function defaultResticRunner(
     let stderrBytes = 0;
     let timedOut = false;
     let aborted = false;
+    let truncated = false;
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const maxOutputBytes =
+      options.maxOutputBytes && options.maxOutputBytes > 0
+        ? options.maxOutputBytes
+        : MAX_OUTPUT_BYTES;
 
     const clearTimers = () => {
       if (timeoutTimer) {
@@ -82,7 +108,7 @@ export function defaultResticRunner(
       settled = true;
       clearTimers();
       options.signal?.removeEventListener("abort", onAbort);
-      resolve({ code, stdout, stderr, timedOut, aborted });
+      resolve({ code, stdout, stderr, timedOut, aborted, truncated });
     };
 
     const terminate = () => {
@@ -126,16 +152,30 @@ export function defaultResticRunner(
     timeoutTimer?.unref?.();
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes <= MAX_OUTPUT_BYTES) {
-        stdout += chunk.toString();
+      if (truncated) {
+        return;
       }
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > maxOutputBytes) {
+        // Never hand truncated output to a parser: stop the process and let
+        // the caller surface an explicit error.
+        truncated = true;
+        terminate();
+        return;
+      }
+      stdout += chunk.toString();
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      if (stderrBytes <= MAX_OUTPUT_BYTES) {
-        stderr += chunk.toString();
+      if (truncated) {
+        return;
       }
+      stderrBytes += chunk.length;
+      if (stderrBytes > maxOutputBytes) {
+        truncated = true;
+        terminate();
+        return;
+      }
+      stderr += chunk.toString();
     });
 
     child.on("error", (error: NodeJS.ErrnoException) => {
@@ -304,11 +344,13 @@ export class ResticClient {
     timeoutMs: number,
     label: string,
     cwd?: string,
+    maxOutputBytes?: number,
   ): Promise<ResticCommandResult> {
     const result = await this.run(args, cwd, {
       timeoutMs,
       killGraceMs: this.timeouts.killGraceMs,
       signal: this.signal,
+      ...(maxOutputBytes ? { maxOutputBytes } : {}),
     });
     if (result.timedOut) {
       throw new ResticSyncError(
@@ -339,8 +381,15 @@ export class ResticClient {
         timeoutMs,
         killGraceMs: this.timeouts.killGraceMs,
         signal: this.signal,
+        maxOutputBytes: MAX_SNAPSHOTS_OUTPUT_BYTES,
       },
     );
+    if (result.truncated) {
+      return {
+        status: "error",
+        message: SNAPSHOT_OUTPUT_LIMIT_MESSAGE,
+      };
+    }
     if (result.timedOut) {
       return {
         status: "error",
@@ -382,7 +431,12 @@ export class ResticClient {
       [...this.baseArgs(), "snapshots", "--json"],
       this.timeouts.snapshotsMs,
       "repository check",
+      undefined,
+      MAX_SNAPSHOTS_OUTPUT_BYTES,
     );
+    if (result.truncated) {
+      throw snapshotOutputLimitError();
+    }
     if (result.code === 0) {
       return true;
     }
@@ -413,7 +467,12 @@ export class ResticClient {
       [...this.baseArgs(), "snapshots", "--json"],
       this.timeouts.snapshotsMs,
       "snapshot listing",
+      undefined,
+      MAX_SNAPSHOTS_OUTPUT_BYTES,
     );
+    if (result.truncated) {
+      throw snapshotOutputLimitError();
+    }
     if (result.code !== 0) {
       if (isRepoNotInitialized(result)) {
         return [];
@@ -434,7 +493,12 @@ export class ResticClient {
       [...this.baseArgs(), "snapshots", id, "--json"],
       this.timeouts.snapshotsMs,
       "snapshot lookup",
+      undefined,
+      MAX_SNAPSHOTS_OUTPUT_BYTES,
     );
+    if (result.truncated) {
+      throw snapshotOutputLimitError();
+    }
     if (result.code !== 0) {
       return null;
     }

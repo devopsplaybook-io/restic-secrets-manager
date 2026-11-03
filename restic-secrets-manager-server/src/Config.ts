@@ -62,6 +62,14 @@ export class Config extends ConfigBase {
   public RESTIC_TIMEOUT_CONNECTION_TEST_MS = 30_000;
   public RESTIC_KILL_GRACE_MS = 5_000;
 
+  // Status checks fan out one restic process per visible project: the
+  // cached value is served immediately (even when stale, then refreshed in
+  // the background), the request waits at most for the deadline and the
+  // queue of checks waiting for a concurrency slot is capped.
+  public SYNC_STATUS_CACHE_TTL_MS = 30_000;
+  public SYNC_STATUS_REQUEST_DEADLINE_MS = 5_000;
+  public SYNC_STATUS_MAX_WAITERS = 100;
+
   constructor() {
     super("restic-secrets-manager-server");
 
@@ -79,6 +87,9 @@ export class Config extends ConfigBase {
     this.addConfigField({ field: "RESTIC_TIMEOUT_INIT_MS" });
     this.addConfigField({ field: "RESTIC_TIMEOUT_CONNECTION_TEST_MS" });
     this.addConfigField({ field: "RESTIC_KILL_GRACE_MS" });
+    this.addConfigField({ field: "SYNC_STATUS_CACHE_TTL_MS" });
+    this.addConfigField({ field: "SYNC_STATUS_REQUEST_DEADLINE_MS" });
+    this.addConfigField({ field: "SYNC_STATUS_MAX_WAITERS" });
   }
 
   public async reload(): Promise<void> {
