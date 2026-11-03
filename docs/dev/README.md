@@ -33,5 +33,5 @@ cd restic-secrets-manager-server
 npm run build && npm run lint && npm run test
 
 cd ../restic-secrets-manager-web
-npm run generate && npm run lint
+npm run generate && npm run lint && npm run test
 ```

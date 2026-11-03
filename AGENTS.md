@@ -71,7 +71,7 @@ restic-secrets-manager/
 - **Dev mode**: `tsx watch` (hot-reload)
 - **Tests**: Jest with `@swc/jest`, files named `*.spec.ts` alongside source
 - **Linting**: oxlint
-- **Config**: Loaded from `config.json`, overridable via environment variables (`ConfigBase`); the file watcher reloads it and re-applies the notification settings without a restart
+- **Config**: Loaded from `config.json`, overridable via environment variables (`ConfigBase`); the file watcher reloads it in place and applies the restic timeouts and kill grace, `SYNC_STATUS_*`, `TMP_DIR` (for operations started after the reload) and the notification settings without a restart — all other settings need a restart
 - **Version**: `VERSION` is the root `package.json` version (`ResolveAppVersion` in `src/Config.ts`), resolved in both the dev (`../..`) and container (`..`, next to `dist`) layouts; `VERSION` env/config still overrides it
 - **Sessions**: JWT validity is 1 hour by default and sessions are never auto-renewed
 - **Secrets handling**: restic credentials are per-project settings; never log sensitive values
@@ -107,7 +107,7 @@ GitHub Actions workflows are defined in `.github/workflows/`, reusing shared wor
 
 - **`main-build.yml`**: On push to `main`. Promotes the PR-validated image to the release tags and runs the shared dependency audit (`audit_enabled: true`).
 - **`pr-check.yml`**: On PR to `main`. Runs build/lint/test for the server and the web app through the shared PR workflow, builds & pushes the `beta`/`beta-pr-<N>` Docker image, and runs the shared dependency audit gate.
-- **Dependency audit**: the shared gate fails on unallowlisted high/critical *production* advisories (`npm audit --omit=dev`) and reports dev/build-only advisories without failing. Accepted exceptions must be time-boxed in `.github/audit-allowlist.json` (`id`, `package`, `scope` `runtime|dev`, `reason`, `owner`, `expires`); never silence an advisory by weakening a check.
+- **Dependency audit**: the shared gate fails on unallowlisted high/critical *production* advisories (`npm audit --omit=dev`) and reports dev/build-only advisories without failing. Accepted exceptions must be time-boxed in `.github/audit-allowlist.json` (`id`, `package`, `scope` `runtime|dev`, `reason`, `owner`, `expires`); never silence an advisory by weakening a check. Both production trees currently report 0 advisories: the server carries a scoped `overrides` entry (`@fastify/static` → `glob ^14.0.3`, which brings a fixed `minimatch`) until `@fastify/static` widens its own range, and the allowlist is empty.
 
 Secrets required in GitHub repository:
 
