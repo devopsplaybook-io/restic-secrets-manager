@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restic-secrets-manager
+spec:
+  template:
+    spec:
+      containers:
+        - name: restic-secrets-manager
+          env:
+            # Only safe when the ingress controller overwrites X-Forwarded-For
+            # and it is the sole path to the application.
+            - name: TRUST_PROXY
+              value: "true"

@@ -102,7 +102,40 @@ client-supplied `X-Forwarded-For` headers.
   limits concurrent restic checks and caps queued waiters, and snapshot
   listings are capped at 10 MB — so the recommended 500m CPU / 500Mi memory
   limits accommodate typical usage.
-- **Security context**: the provided manifests do not set a
-  `securityContext`. On hardened clusters, run the container as non-root
-  with dropped capabilities (for example `runAsNonRoot: true` and
-  `capabilities: drop: ["ALL"]`).
+- **Container security**: the image runs as non-root (uid/gid `10001`)
+  with a read-only root filesystem. The shipped Kubernetes deployment adds
+  `runAsNonRoot`, `runAsGroup`/`fsGroup: 10001`, `allowPrivilegeEscalation:
+  false`, `capabilities.drop: ["ALL"]` and `seccompProfile: RuntimeDefault`,
+  and mounts a memory-backed `emptyDir` at `/tmp` for `TMP_DIR` and the
+  restic cache. The Compose example mirrors the non-root user, the read-only
+  root filesystem, the dropped capabilities and the `/tmp` tmpfs. `/data`
+  must be writable by uid/gid `10001`: `fsGroup` makes dynamically
+  provisioned PVCs writable on Kubernetes, while hostPath, static NFS and
+  storage classes without fsGroup support must be pre-owned
+  (`chown -R 10001:10001 <volume>`). See the
+  [Kubernetes](./kubernetes/README.md) and
+  [Compose](./docker-compose/README.md) guides.
+
+## Container and security checklist (pull requests)
+
+Every change that touches the image, the deployment manifests, the HTTP
+layer, restic invocations or error handling should verify:
+
+- [ ] Non-root runtime: image `USER` and manifests use uid/gid `10001`;
+      `runAsNonRoot`, dropped capabilities and `allowPrivilegeEscalation:
+      false`.
+- [ ] Read-only root filesystem with writable mounts only where the
+      application needs them; `TMP_DIR` (and `RESTIC_CACHE_DIR`) on a
+      memory-backed tmpfs/`emptyDir`, never the node disk.
+- [ ] `entrypoint.sh` keeps `exec` so SIGTERM reaches Node and requests
+      drain.
+- [ ] restic child processes get the minimal allowlisted environment, never
+      `process.env`.
+- [ ] Security headers are sent (`Content-Security-Policy`,
+      `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`).
+- [ ] Secret-bearing responses stay excluded from compression.
+- [ ] `TRUST_PROXY=true` only behind a trusted proxy/ingress that overwrites
+      `X-Forwarded-For`.
+- [ ] Unexpected sync errors return a generic 500 with a correlation id
+      (no raw internal message).
+- [ ] No new OpenTelemetry metric without explicit approval.

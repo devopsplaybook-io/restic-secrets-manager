@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { Project } from "../model/Project";
 import {
+  buildResticEnv,
   compareSnapshots,
   CONNECTION_TEST_TIMEOUT_MS,
   defaultResticRunner,
@@ -74,6 +75,66 @@ describe("ResticClient env", () => {
     expect(env.RESTIC_REPOSITORY).toBe(
       "s3:https://s3.example.com/bucket/prefix",
     );
+  });
+});
+
+describe("buildResticEnv", () => {
+  const source: NodeJS.ProcessEnv = {
+    PATH: "/usr/bin",
+    HOME: "/home/svc",
+    TMPDIR: "/tmp/custom",
+    HTTPS_PROXY: "http://proxy:3128",
+    SSL_CERT_FILE: "/etc/ssl/custom.pem",
+    AWS_SESSION_TOKEN: "aws-session",
+    RESTIC_CACHE_DIR: "/tmp/restic-cache",
+    JWT_KEY: "jwt-secret",
+    DATABASE_POSTGRES_PASSWORD: "db-secret",
+    NOTIFICATIONS_API_TOKEN: "notify-secret",
+    NODE_OPTIONS: "--max-old-space-size=256",
+    AWS_ACCESS_KEY_ID: "server-aws-key",
+    RESTIC_PASSWORD: "server-restic-password",
+  };
+
+  it("keeps process, proxy, CA, AWS_* and RESTIC_* variables", () => {
+    const env = buildResticEnv(makeProject(), source);
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/home/svc");
+    expect(env.TMPDIR).toBe("/tmp/custom");
+    expect(env.HTTPS_PROXY).toBe("http://proxy:3128");
+    expect(env.SSL_CERT_FILE).toBe("/etc/ssl/custom.pem");
+    expect(env.AWS_SESSION_TOKEN).toBe("aws-session");
+    expect(env.RESTIC_CACHE_DIR).toBe("/tmp/restic-cache");
+  });
+
+  it("drops unrelated server secrets", () => {
+    const env = buildResticEnv(makeProject(), source);
+    expect(env.JWT_KEY).toBeUndefined();
+    expect(env.DATABASE_POSTGRES_PASSWORD).toBeUndefined();
+    expect(env.NOTIFICATIONS_API_TOKEN).toBeUndefined();
+    expect(env.NODE_OPTIONS).toBeUndefined();
+  });
+
+  it("overrides server values with the project credentials", () => {
+    const env = buildResticEnv(makeProject(), source);
+    expect(env.AWS_ACCESS_KEY_ID).toBe("key-id");
+    expect(env.AWS_SECRET_ACCESS_KEY).toBe("secret-key");
+    expect(env.RESTIC_PASSWORD).toBe("repo-password");
+    expect(env.RESTIC_REPOSITORY).toBe(
+      "s3:https://s3.example.com/bucket/prefix",
+    );
+  });
+
+  it("falls back to a sane PATH and HOME when they are absent", () => {
+    const env = buildResticEnv(makeProject(), {});
+    expect(env.PATH).toBe(
+      "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    expect(env.HOME).toBe(os.tmpdir());
+  });
+
+  it("is used by the client environment", () => {
+    const client = new ResticClient(makeProject());
+    expect(client.env()).toEqual(buildResticEnv(makeProject()));
   });
 });
 

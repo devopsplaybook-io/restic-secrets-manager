@@ -42,12 +42,21 @@ Run restic-secrets-manager in Docker:
 
 ```bash
 mkdir -p data
-docker run --name restic-secrets-manager -p 8080:8080 -e JWT_KEY=<generate-a-strong-random-key> -v "$(pwd)/data:/data" -d devopsplaybookio/restic-secrets-manager
+# The image runs as uid/gid 10001: the data directory must be writable by it
+sudo chown -R 10001:10001 data
+docker run --name restic-secrets-manager -p 8080:8080 \
+  -e JWT_KEY=<generate-a-strong-random-key> \
+  -v "$(pwd)/data:/data" \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=256m,mode=1777 \
+  --cap-drop ALL --security-opt no-new-privileges \
+  -d devopsplaybookio/restic-secrets-manager
 ```
 
 - Docker image: [`devopsplaybookio/restic-secrets-manager`](https://hub.docker.com/r/devopsplaybookio/restic-secrets-manager)
 - Exposes port: `8080` (web UI and API)
-- Data volume: `/data` (SQLite database)
+- Data volume: `/data` (SQLite database), writable by uid/gid `10001`
+- The container runs as the non-root user `10001`, with a read-only root filesystem, dropped capabilities and a memory-backed `/tmp` (restic working directories and cache). `docker stop` sends SIGTERM to Node, which drains in-flight requests before exiting.
 
 ### Kubernetes
 
@@ -138,7 +147,7 @@ The successful reload is logged as `Configuration reloaded: ...`. All other sett
 | `AUTH_RATE_LIMIT_LOGIN_MAX`            | `10`                     | Login attempts allowed per window (per IP and username; `0` disables) |
 | `AUTH_RATE_LIMIT_REFRESH_MAX`          | `60`                     | Session refresh requests allowed per window (per IP; `0` disables) |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS`       | `60`                     | Rate-limit window in seconds                        |
-| `TRUST_PROXY`                          | `false`                  | Trust `X-Forwarded-For` from a reverse proxy (needed for correct client IPs behind a proxy) |
+| `TRUST_PROXY`                          | `false`                  | Trust `X-Forwarded-For` from a reverse proxy (needed for correct client IPs behind a proxy). Enable it only when the proxy overwrites client-supplied `X-Forwarded-For` and is the only path to the application; the shipped Kubernetes base keeps it `false` and the opt-in Ingress overlay sets it to `true` |
 | `CORS_POLICY_ORIGIN`                   |                          | CORS allowed origin                                 |
 | `DATA_DIR`                             | `/data`                  | Data directory (SQLite database)                    |
 | `DATABASE_TYPE`                        | `sqlite`                 | `sqlite` or `postgres`                              |
@@ -148,7 +157,8 @@ The successful reload is logged as `Configuration reloaded: ...`. All other sett
 | `DATABASE_POSTGRES_PASSWORD`           |                          | PostgreSQL password                                 |
 | `DATABASE_POSTGRES_DATABASE`           |                          | PostgreSQL database                                 |
 | `LOG_LEVEL`                            | `info`                   | Log level                                           |
-| `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders (use a private/tmpfs mount when possible) |
+| `TMP_DIR`                              | `/tmp`                   | Directory used for temporary restic working folders (mount a private tmpfs; the image and shipped manifests use `/tmp`) |
+| `RESTIC_CACHE_DIR`                     | `/tmp/restic-cache` (image) | restic cache directory; keep it on the writable tmpfs when the root filesystem is read-only |
 | `RESTIC_TIMEOUT_SNAPSHOTS_MS`          | `30000`                  | Timeout of `restic snapshots` operations and sync status checks |
 | `RESTIC_TIMEOUT_RESTORE_MS`            | `300000`                 | Timeout of `restic restore` operations (pull and previews) |
 | `RESTIC_TIMEOUT_BACKUP_MS`             | `600000`                 | Timeout of `restic backup` operations (push)        |
@@ -200,7 +210,7 @@ Deployment examples with real deployment files are available in [docs/deployment
 - Secret-bearing API responses (secret lists, environment/JSON exports, create and update echoes) carry `Cache-Control: no-store`, `Pragma: no-cache` and `Vary: Authorization` so browsers and intermediaries never store secret material.
 - Login and session refresh are rate limited per client IP (and per username for login), answering `429` with `Retry-After` when exceeded. Behind a reverse proxy set `TRUST_PROXY=true` so the real client IP is used.
 - Unsaved secret edits are kept in `sessionStorage` for at most 15 minutes, are bound to the user who wrote them and are cleared on explicit logout and after login. They are never sent to the server before the secrets are saved.
-- Temporary restic working directories are created with mode `0700` and files with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup. Prefer a private tmpfs mount for `TMP_DIR` so plaintext never touches persistent disk.
+- Temporary restic working directories are created with mode `0700` and files with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup. The image and the shipped Kubernetes/Compose examples put `TMP_DIR` (and the restic cache) on a memory-backed mount so plaintext never touches persistent disk.
 - Push is rejected with HTTP 409 when the target repository holds a more recent snapshot, preventing accidental overwrites. The latest snapshot is compared by parsed timestamp, not by string order.
 - Secret updates are versioned: a stale write answers HTTP 409 instead of overwriting a concurrent change. Every secret mutation (create, update, delete, copy-key) writes the new project content hash in the same database transaction. Copy-key merges the selected key into a fresh read of the secret under the project write lock, so unrelated concurrent keys are preserved.
 - Pull, snapshot restore and discard use a compare-and-swap token: the preview returns the current secrets `contentHash`, the confirmation echoes it, and a mismatch answers HTTP 409 (`SYNC_PREVIEW_STALE`) without changing any secret. Requests without the token remain compatible and capture the current content when they start.
@@ -208,6 +218,12 @@ Deployment examples with real deployment files are available in [docs/deployment
 - The `.env` export only emits portable environment variable names and canonical escaping; secrets with other key names remain available through the JSON export.
 - Sessions are short-lived (1 hour) and not renewed; expired sessions require a new login.
 - `JWT_KEY`: when set (environment or `config.json`), it is used as the signing key and is never written to the database; when empty, the key is generated once and stored in the database. Changing the configured key (or the database value when unset) invalidates all issued sessions, which is the intended rotation mechanism.
+- The container runs as non-root (uid/gid `10001`) with a read-only root filesystem, all capabilities dropped and a memory-backed `/tmp`; `entrypoint.sh` uses `exec` so Node receives SIGTERM and drains in-flight requests on `docker stop` / rolling updates. The shipped Kubernetes deployment adds a restrictive pod `securityContext` (`runAsNonRoot`, `fsGroup`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`).
+- Every response carries `Content-Security-Policy` (inline Nuxt bootstrap pinned by sha256 hashes, no `unsafe-inline` for scripts), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`.
+- Secret-bearing responses are excluded from HTTP compression: it is cheap defense in depth against compression side channels (BREACH) and the payloads are small.
+- restic child processes receive a minimal allowlisted environment (process, proxy/CA and `AWS_*`/`RESTIC_*` variables plus the project credentials), never the whole server environment: the JWT key, database credentials and notification tokens are not exposed to them.
+- Unexpected synchronization failures answer a generic HTTP 500 (`INTERNAL_ERROR`) with a correlation id; the detailed error is logged server-side (stack only, no secret material) under the same id. `ResticSyncError` messages that are intentionally user-facing (conflicts, timeouts, disconnects) are unchanged.
+- Project-scoped routes authorize the caller before loading the project: a caller without access receives `403` for both existing and missing project ids, so project existence is not disclosed by a `404`. Admins still receive `404` for a missing project.
 
 ## License
 

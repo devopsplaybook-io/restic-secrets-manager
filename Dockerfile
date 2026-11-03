@@ -23,6 +23,18 @@ FROM node:26-alpine
 # restic is required at runtime to pull/push secrets snapshots
 RUN apk add --no-cache restic gzip
 
+# Dedicated non-root runtime user (fixed uid/gid shared by the K8s manifests
+# and the Compose example). /home/app is the writable HOME and /data is the
+# persistent data directory; named volumes still need matching ownership.
+RUN addgroup -S -g 10001 app && \
+    adduser -S -D -H -u 10001 -G app -h /home/app -s /sbin/nologin app && \
+    mkdir -p /home/app /data && \
+    chown -R app:app /home/app /data
+
+ENV HOME=/home/app \
+    TMP_DIR=/tmp \
+    RESTIC_CACHE_DIR=/tmp/restic-cache
+
 COPY entrypoint.sh /entrypoint.sh
 
 COPY --from=builder /opt/src/restic-secrets-manager-server/node_modules /opt/app/restic-secrets-manager/node_modules
@@ -35,5 +47,7 @@ COPY restic-secrets-manager-server/sql /opt/app/restic-secrets-manager/sql
 COPY package.json /opt/app/restic-secrets-manager/package.json
 
 WORKDIR /opt/app/restic-secrets-manager
+
+USER 10001:10001
 
 ENTRYPOINT [ "/entrypoint.sh" ]

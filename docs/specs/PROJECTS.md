@@ -57,5 +57,6 @@ Each project is defined with the settings required to connect to a restic reposi
 - [x] Regular users only see the projects they have been granted access to
 - [x] Admin visibility is resolved from the live database role, not from the session token: a demoted admin immediately loses cross-project access
 - [x] Users without access to any project see an empty list
+- [x] Project-scoped routes authorize the caller before loading the project: a caller without access receives `403` for both existing and missing project ids (no existence oracle), while admins still receive `404` for a missing project
 
 Last spec review: 2026-11-03

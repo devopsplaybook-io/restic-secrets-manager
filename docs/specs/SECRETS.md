@@ -26,6 +26,7 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Unsaved editor changes survive a session expiry: they are preserved before the redirect to the login page and the user is offered to restore them when back on the project page after re-login
 - [x] Preserved unsaved edits expire after 15 minutes, are bound to the user who wrote them (never restored for another user) and are cleared on explicit logout and after a successful login
 - [x] Secret-bearing API responses (secret list, .env/JSON exports, create and update echoes) are sent with `Cache-Control: no-store`, `Pragma: no-cache` and `Vary: Authorization` so browsers and intermediaries never cache secret material
+- [x] Secret-bearing responses are excluded from HTTP compression (BREACH defense in depth), while other responses keep the global compression plugin
 
 ## Push (backup to restic repository)
 
@@ -80,6 +81,8 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Snapshot listings are capped at 10 MB of restic output and report an explicit error instead of returning truncated data
 - [x] Synchronization operations (pull, push, restore, discard and previews) are serialized per project across replicas with a PostgreSQL advisory lock in addition to the in-process queue; SQLite deployments remain single-replica
 - [x] Temporary restic working directories are created with mode `0700` and the secret files inside with mode `0600`; stale `restic-secrets-manager-*` directories older than 24 hours are removed at startup (a private tmpfs `TMP_DIR` is recommended so plaintext never reaches persistent disk)
+- [x] Unexpected synchronization failures never return the raw internal message: the server logs the detail (stack only, no request body, credentials or secret payloads) with a correlation id and answers a generic HTTP 500 `INTERNAL_ERROR` carrying that id; `ResticSyncError` messages that are intentionally user-facing are unchanged
+- [x] restic child processes receive a minimal environment (process, proxy/CA and `AWS_*`/`RESTIC_*` variables, overwritten by the project credentials): the JWT key, database credentials and notification tokens never reach them
 
 ## Programmatic access
 

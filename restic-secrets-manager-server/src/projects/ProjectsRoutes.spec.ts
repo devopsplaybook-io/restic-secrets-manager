@@ -175,15 +175,21 @@ function liveAdmin() {
   return liveUser({ id: "admin-1", name: "admin", role: "admin" });
 }
 
-/** Mirrors the real ProjectAccessGetUser denial (401 + null, no throw). */
+/**
+ * Mirrors the real denial of an unauthenticated request (401 + null, no
+ * throw). List routes use ProjectAccessGetUser, project-scoped routes use
+ * ProjectAccessEnsure, so both guards are stubbed.
+ */
 function denyUnauthenticated(): void {
-  getUserMock.mockImplementation(async (_req: unknown, res: any) => {
+  const deny = async (_req: unknown, res: any) => {
     res.status(401).send({
       error: "Authentication Required",
       code: "UNAUTHENTICATED",
     });
     return null;
-  });
+  };
+  getUserMock.mockImplementation(deny);
+  ensureMock.mockImplementation(deny);
 }
 
 /** Mirrors the real ProjectAccessEnsure denial (403 + null, no throw). */
@@ -772,11 +778,19 @@ describe("synchronization endpoints", () => {
     expect(res.statusCode).toBe(409);
   });
 
-  it("should map an unexpected error to 500", async () => {
+  it("should map an unexpected error to a generic 500 with a correlation id", async () => {
     syncPushMock.mockRejectedValue(new Error("restic exploded"));
     const res = await fastify.inject({ method: "POST", url: "/p1/push" });
     expect(res.statusCode).toBe(500);
-    expect(res.json()).toEqual({ error: "restic exploded" });
+    const body = res.json();
+    expect(body).toEqual({
+      error: "Internal Server Error",
+      code: "INTERNAL_ERROR",
+      correlationId: expect.any(String),
+    });
+    expect(body.correlationId.length).toBeGreaterThan(0);
+    // The internal message is never returned to the client
+    expect(JSON.stringify(body)).not.toContain("restic exploded");
   });
 
   it("should return 404 when the project does not exist", async () => {
@@ -1026,6 +1040,61 @@ describe("configuration hot reload", () => {
   });
 });
 
+describe("authorize before loading the project", () => {
+  it("answers 403 for a missing project without loading it", async () => {
+    denyForbidden();
+    dataGetMock.mockResolvedValue(null);
+
+    const res = await fastify.inject({ method: "GET", url: "/missing" });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("FORBIDDEN");
+    expect(dataGetMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 403 for an existing project without loading it", async () => {
+    denyForbidden();
+    dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+
+    const res = await fastify.inject({ method: "GET", url: "/p1" });
+
+    expect(res.statusCode).toBe(403);
+    // Existence is not disclosed: the data layer is never reached
+    expect(dataGetMock).not.toHaveBeenCalled();
+    expect(countForProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 404 for an admin on a missing project", async () => {
+    dataGetMock.mockResolvedValue(null);
+
+    const res = await fastify.inject({ method: "GET", url: "/missing" });
+
+    expect(res.statusCode).toBe(404);
+    expect(dataGetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["GET", "/p1/status"],
+    ["GET", "/p1/snapshots"],
+    ["POST", "/p1/pull"],
+    ["POST", "/p1/push"],
+    ["POST", "/p1/discard"],
+    ["GET", "/p1/preview/pull"],
+    ["GET", "/p1/preview/discard"],
+  ] as const)(
+    "checks access before loading the project on %s %s",
+    async (method, url) => {
+      denyForbidden();
+      dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
+
+      const res = await fastify.inject({ method, url });
+
+      expect(res.statusCode).toBe(403);
+      expect(dataGetMock).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("live authorization regressions", () => {
   const projectBody = {
     name: "New Project",
@@ -1095,7 +1164,7 @@ describe("live authorization regressions", () => {
   });
 
   it("should use the live user name as the push actor", async () => {
-    getUserMock.mockResolvedValue(liveUser({ name: "alice" }));
+    ensureMock.mockResolvedValue(liveUser({ name: "alice" }));
     dataGetMock.mockResolvedValue(projectFixture({ id: "p1" }));
     syncPushMock.mockResolvedValue({
       snapshotId: "abc12345",
