@@ -29,6 +29,7 @@
 - [x] Access is granted/revoked by admins from the user management UI
 - [x] Access changes take effect immediately (authorization is checked against the database, not the token)
 - [x] Deleting a project removes its access scope from the stored user records (best effort, so users do not keep a dangling grant)
+- [x] The known project scopes are refreshed from the database every 30 seconds and immediately after the replica creates or deletes a project, so scope validation follows projects managed by another replica; the residual convergence window is documented for multi-replica deployments
 - [x] Authorization resolves the live user and role from the database on every request (cached per request); the JWT role claim is never authoritative, so a demoted admin loses admin rights on the next request
 - [x] Requests from users that no longer exist in the database are rejected as unauthenticated (`401`)
 
@@ -41,4 +42,4 @@
 - [x] A token authenticates as its owning user with the user's live role and project scopes (resolved per request, so access or role changes apply immediately)
 - [x] The number of API tokens per user is bounded (`API_TOKENS_MAX_PER_USER`)
 
-Last spec review: 2026-10-23
+Last spec review: 2026-11-03

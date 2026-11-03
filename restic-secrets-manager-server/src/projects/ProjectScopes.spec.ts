@@ -4,6 +4,9 @@ import {
   PROJECT_SCOPE_PREFIX,
   ProjectScopesAdd,
   ProjectScopesPruneFromUsers,
+  ProjectScopesRefresh,
+  ProjectScopesRefreshStart,
+  ProjectScopesRefreshStop,
   ProjectScopesRemove,
 } from "./ProjectScopes";
 
@@ -13,7 +16,18 @@ jest.mock("@devopsplaybook.io/common-utils", () => ({
   UsersDataUpdateUser: jest.fn(),
 }));
 
+jest.mock("./ProjectsData", () => ({
+  ProjectsDataList: jest.fn(),
+}));
+
 const commonUtils = jest.requireMock("@devopsplaybook.io/common-utils");
+const projectsData = jest.requireMock("./ProjectsData");
+const projectsListMock = projectsData.ProjectsDataList as jest.Mock;
+
+afterEach(() => {
+  ProjectScopesRefreshStop();
+  jest.restoreAllMocks();
+});
 
 describe("projectScope", () => {
   it("should prefix the project id", () => {
@@ -45,6 +59,112 @@ describe("ProjectScopesRemove", () => {
     User.ALL_SCOPES = ["project:test-project-3", "project:other"];
     ProjectScopesRemove("test-project-3");
     expect(User.ALL_SCOPES).toEqual(["project:other"]);
+    User.ALL_SCOPES = original;
+  });
+});
+
+describe("ProjectScopesRefresh", () => {
+  beforeEach(() => {
+    projectsListMock.mockReset();
+  });
+
+  it("should apply the database list and drop a project deleted elsewhere", async () => {
+    const original = [...User.ALL_SCOPES];
+    User.ALL_SCOPES = ["project:a"];
+
+    projectsListMock.mockResolvedValue([{ id: "a" }, { id: "b" }]);
+    await expect(ProjectScopesRefresh()).resolves.toBe(true);
+    expect(User.ALL_SCOPES).toEqual(["project:a", "project:b"]);
+
+    // project:b was deleted on another replica
+    projectsListMock.mockResolvedValue([{ id: "a" }]);
+    await expect(ProjectScopesRefresh()).resolves.toBe(true);
+    expect(User.ALL_SCOPES).toEqual(["project:a"]);
+
+    User.ALL_SCOPES = original;
+  });
+
+  it("should keep the last good list when the database query fails", async () => {
+    const original = [...User.ALL_SCOPES];
+    User.ALL_SCOPES = ["project:a"];
+
+    projectsListMock.mockRejectedValue(new Error("database unavailable"));
+    await expect(ProjectScopesRefresh()).resolves.toBe(false);
+
+    expect(User.ALL_SCOPES).toEqual(["project:a"]);
+    User.ALL_SCOPES = original;
+  });
+
+  it("should share one query between concurrent refreshes", async () => {
+    const original = [...User.ALL_SCOPES];
+    let resolveProjects: (projects: unknown[]) => void = () => undefined;
+    projectsListMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveProjects = resolve;
+      }),
+    );
+
+    const first = ProjectScopesRefresh();
+    const second = ProjectScopesRefresh();
+    expect(projectsListMock).toHaveBeenCalledTimes(1);
+
+    resolveProjects([{ id: "a" }]);
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    User.ALL_SCOPES = original;
+  });
+
+  it("should not let an in-flight refresh undo a local write", async () => {
+    const original = [...User.ALL_SCOPES];
+    User.ALL_SCOPES = ["project:a"];
+    let resolveProjects: (projects: unknown[]) => void = () => undefined;
+    projectsListMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveProjects = resolve;
+      }),
+    );
+
+    const refresh = ProjectScopesRefresh();
+    // The create route updates the list locally before the query returns
+    ProjectScopesAdd("local");
+    resolveProjects([{ id: "a" }]);
+
+    await expect(refresh).resolves.toBe(false);
+    expect(User.ALL_SCOPES).toEqual(["project:a", "project:local"]);
+
+    User.ALL_SCOPES = original;
+  });
+
+  it("should run the refresh on an unref'd interval until stopped", async () => {
+    const original = [...User.ALL_SCOPES];
+    projectsListMock.mockResolvedValue([]);
+    const handle = { unref: jest.fn() };
+    const setIntervalSpy = jest
+      .spyOn(global, "setInterval")
+      .mockReturnValue(handle as unknown as NodeJS.Timeout);
+    const clearIntervalSpy = jest
+      .spyOn(global, "clearInterval")
+      .mockImplementation(() => undefined);
+
+    ProjectScopesRefreshStart(1000);
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    expect(setIntervalSpy.mock.calls[0][1]).toBe(1000);
+    expect(handle.unref).toHaveBeenCalledTimes(1);
+
+    // A second start does not create another interval
+    ProjectScopesRefreshStart(1000);
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+
+    const tick = setIntervalSpy.mock.calls[0][0] as () => void;
+    tick();
+    expect(projectsListMock).toHaveBeenCalledTimes(1);
+    // Let the scheduled refresh settle before the next test
+    await new Promise((resolve) => setImmediate(resolve));
+
+    ProjectScopesRefreshStop();
+    expect(clearIntervalSpy).toHaveBeenCalledWith(handle);
+
     User.ALL_SCOPES = original;
   });
 });

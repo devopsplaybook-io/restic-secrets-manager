@@ -56,6 +56,17 @@ client-supplied `X-Forwarded-For` headers.
   share one PostgreSQL database and the same restic repositories. With the
   default SQLite setup the database is a single file: run exactly one
   replica. The sync status cache stays per-instance either way.
+- **Project access scopes across replicas**: every replica keeps the list of
+  known project scopes (`project:<id>`) in memory because the shared user
+  routes validate submitted scopes against it. The list is refreshed every
+  30 seconds and immediately after the replica creates or deletes a project,
+  so a project created or deleted on another replica is reflected within
+  that window. Within the window, an admin user create/update handled by a
+  stale replica can silently drop a newly granted project scope (or re-add a
+  just-deleted, inert one): wait for the window after a cross-replica
+  project change before editing user scopes, and re-add a dropped grant.
+  SQLite single-replica deployments are not affected. The long-term fix is a
+  database-backed scope provider in `@devopsplaybook.io/common-utils`.
 - **Restic timeouts**: every restic invocation is bounded
   (`RESTIC_TIMEOUT_SNAPSHOTS_MS` 30 s, `RESTIC_TIMEOUT_RESTORE_MS` 5 min,
   `RESTIC_TIMEOUT_BACKUP_MS` 10 min, `RESTIC_TIMEOUT_INIT_MS` 60 s,

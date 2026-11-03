@@ -11,6 +11,7 @@
 - Secret updates use a single conditional `UPDATE ... WHERE version = ?` (version incremented in the same statement), which is atomic on both database types
 - `restic` CLI invoked for pull/push operations against S3-compatible repositories, through a `spawn` runner with per-operation timeouts, SIGTERM→SIGKILL escalation and AbortSignal support for client disconnects
 - PostgreSQL advisory locks (via the common-utils database facade) serializing synchronization operations per project across replicas and project creation/name-target checks; SQLite deployments stay single-replica
+- `config.json` is watched and reloaded in place: the restic timeouts and kill grace, `TMP_DIR` (for operations started after the reload) and the sync notifications settings apply without a restart; all other settings (port, database, JWT/auth, OTel exporters) are applied at startup
 - Jest with `@swc/jest` and `oxlint` for unit tests and linting on the server
 
 ## Web
@@ -35,4 +36,4 @@
 - GitHub Actions CI reusing the shared devopsplaybook.io workflows: build/lint/test of the server and web apps, the immutable PR-image promotion, and the shared dependency-audit gate (`npm audit --omit=dev`; unallowlisted high/critical production advisories fail, dev-only advisories are reported, accepted exceptions live in `.github/audit-allowlist.json` with an owner and expiry date)
 - The application release version is the root `package.json` version: it drives the Docker image tag and is the version the server reports (OpenTelemetry service version) both in development and in the container; `VERSION` still overrides it per `ConfigBase`
 
-Last spec review: 2026-10-31
+Last spec review: 2026-11-03
