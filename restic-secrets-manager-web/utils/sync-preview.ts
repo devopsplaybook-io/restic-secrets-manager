@@ -1,3 +1,5 @@
+import { extractApiErrorCode } from "./api-error";
+
 export type SyncPreviewStatus = "added" | "removed" | "changed";
 
 export interface SyncPreviewKey {
@@ -32,9 +34,17 @@ export interface SyncPreview {
   secrets: SyncPreviewSecret[];
   snapshotId?: string;
   snapshotTime?: string;
+  /**
+   * Commitment of the project secrets read by the preview. Confirmations
+   * echo it; the server answers 409 when the secrets changed meanwhile.
+   */
+  contentHash?: string;
 }
 
 export const MASKED_VALUE = "••••••••";
+
+/** Server error code of a confirmation whose preview is out of date. */
+export const SYNC_PREVIEW_STALE = "SYNC_PREVIEW_STALE";
 
 const STATUS_LABELS = {
   added: "Added",
@@ -103,18 +113,39 @@ export function shortSnapshotId(snapshotId) {
   return typeof snapshotId === "string" ? snapshotId.substring(0, 8) : "";
 }
 
+/** True when the server refused a confirmation because its preview is stale. */
+export function isSyncPreviewStale(error) {
+  return extractApiErrorCode(error) === SYNC_PREVIEW_STALE;
+}
+
+/**
+ * True when a confirmation failed with 409: the repository or the project
+ * secrets moved since the preview, which must be computed again.
+ */
+export function shouldRefreshPreview(error) {
+  const status = error?.response?.status ?? error?.status;
+  return status === 409;
+}
+
 /**
  * Request executing a previewed synchronization operation. A pull always
  * carries the snapshot id pinned by its preview: the server rejects it
- * with 409 when the repository moved since the preview.
+ * with 409 when the repository moved since the preview. The optional
+ * content hash pins the previewed secret content the same way.
  */
-export function buildSyncExecutionRequest(mode, projectId, snapshotId) {
+export function buildSyncExecutionRequest(
+  mode,
+  projectId,
+  snapshotId,
+  contentHash?,
+) {
   const base = `/projects/${projectId}`;
+  const token = contentHash ? { contentHash } : {};
   if (mode === "pull") {
-    return { url: `${base}/pull`, body: { snapshotId } };
+    return { url: `${base}/pull`, body: { snapshotId, ...token } };
   }
   if (mode === "discard") {
-    return { url: `${base}/discard` };
+    return { url: `${base}/discard`, body: token };
   }
-  return { url: `${base}/snapshots/${snapshotId}/restore` };
+  return { url: `${base}/snapshots/${snapshotId}/restore`, body: token };
 }

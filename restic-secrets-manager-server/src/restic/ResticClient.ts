@@ -164,8 +164,45 @@ export interface ResticConnectionTestResult {
 export { CONNECTION_TEST_TIMEOUT_MS };
 
 /**
- * Returns the most recent snapshot of the list (by snapshot time),
- * or null when the list is empty.
+ * Orders two snapshots by instant: the RFC 3339 time is parsed to epoch
+ * milliseconds so mixed UTC offsets and sub-second precision are compared
+ * numerically, not lexicographically. A missing/unparsable time is older
+ * than any valid time; identical instants are tie-broken by snapshot id
+ * (ascending) so the order is deterministic and the greatest id wins.
+ */
+export function compareSnapshots(a: ResticSnapshot, b: ResticSnapshot): number {
+  const timeA = parseSnapshotTime(a.time);
+  const timeB = parseSnapshotTime(b.time);
+  if (timeA === null && timeB === null) {
+    return compareIds(a.id, b.id);
+  }
+  if (timeA === null) {
+    return -1;
+  }
+  if (timeB === null) {
+    return 1;
+  }
+  if (timeA !== timeB) {
+    return timeA < timeB ? -1 : 1;
+  }
+  return compareIds(a.id, b.id);
+}
+
+function parseSnapshotTime(time: unknown): number | null {
+  if (typeof time !== "string" || time.length === 0) {
+    return null;
+  }
+  const parsed = Date.parse(time);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Returns the most recent snapshot of the list (by snapshot instant, with a
+ * deterministic id tie-break), or null when the list is empty.
  */
 export function latestSnapshot(
   snapshots: ResticSnapshot[],
@@ -174,7 +211,7 @@ export function latestSnapshot(
     return null;
   }
   return snapshots.reduce((latest, current) =>
-    current.time > latest.time ? current : latest,
+    compareSnapshots(current, latest) > 0 ? current : latest,
   );
 }
 

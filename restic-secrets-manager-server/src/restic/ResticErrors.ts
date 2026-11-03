@@ -5,10 +5,13 @@
  */
 export class ResticSyncError extends Error {
   public statusCode: number;
+  /** Stable machine-readable code sent alongside the message. */
+  public code?: string;
 
-  constructor(message: string, statusCode: number) {
+  constructor(message: string, statusCode: number, code?: string) {
     super(message);
     this.name = "ResticSyncError";
     this.statusCode = statusCode;
+    this.code = code;
   }
 }

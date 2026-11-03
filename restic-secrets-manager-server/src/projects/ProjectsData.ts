@@ -130,22 +130,24 @@ export async function ProjectsDataDeleteCascade(
 
 /**
  * Records the snapshot synchronized by the last pull, push or restore,
- * together with the hash of the synchronized secrets content. After a
- * synchronization the baseline hash and the current content hash are the
- * same, so both columns are written in one statement.
+ * together with the hash of the synchronized content and the hash of the
+ * current local content. After a replace both hashes are equal; a push
+ * records the pushed baseline and the fresh local content separately, so
+ * an edit made during the backup stays visible as a local change.
  */
 export async function ProjectsDataUpdateSyncState(
   context: Span | undefined,
   id: string,
   snapshotId: string,
   snapshotTime: string,
-  contentHash: string,
+  lastSyncContentHash: string,
+  currentContentHash: string,
 ): Promise<void> {
   await DbUtilsExecSQL(context, SQL_QUERIES.UPDATE_SYNC_STATE, [
     snapshotId,
     snapshotTime,
-    contentHash,
-    contentHash,
+    lastSyncContentHash,
+    currentContentHash,
     id,
   ]);
 }

@@ -9,7 +9,8 @@ import { ResticSnapshot } from "./ResticClient";
 import { computeSecretsHash } from "../secrets/SecretsHash";
 import {
   ensureNoNewerSnapshot,
-  importPulledSecrets,
+  readSnapshotSecrets,
+  resolveCreatedSnapshot,
   ResticSyncDiscardLocalChanges,
   ResticSyncError,
   ResticSyncListSnapshots,
@@ -18,6 +19,7 @@ import {
   ResticSyncRestoreSnapshot,
   ResticSyncStatus,
   ResticSyncTestConnection,
+  SYNC_PREVIEW_STALE_CODE,
 } from "./SyncService";
 
 jest.mock("./TempWorkDir", () => {
@@ -38,11 +40,18 @@ jest.mock("./ResticClient", () => {
   };
 });
 
+jest.mock("../utils-std-ts/DbUtils", () => ({
+  DbUtilsWithLock: jest.fn(
+    (_lock: string, task: () => Promise<unknown>) => task(),
+  ),
+}));
+
 const ResticClientMock = jest.requireMock("./ResticClient").ResticClient;
 const tempWorkDir = jest.requireMock("./TempWorkDir");
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   const project = new Project();
+  project.id = "test-project";
   project.name = "Test";
   project.s3Endpoint = "s3.example.com";
   project.s3Bucket = "bucket";
@@ -91,6 +100,22 @@ function makeSecret(name: string, data: Record<string, string>): Secret {
   return secret;
 }
 
+/** Data layer stub with the functions used by pull/restore/discard. */
+function makeDataApi(overrides: Record<string, jest.Mock> = {}) {
+  return {
+    ProjectsDataGet: jest.fn(async () => makeProject()),
+    SecretsDataListForProject: jest.fn(async () => []),
+    SecretsDataReplaceForProject: jest.fn(async () => undefined),
+    ProjectsDataUpdateSyncState: jest.fn(async () => undefined),
+    SecretsDataCountForProject: jest.fn(async () => 0),
+    ...overrides,
+  };
+}
+
+function snapshotFile(dir: string, name: string, data: unknown): Promise<void> {
+  return fse.writeJson(path.join(dir, name), data);
+}
+
 describe("ensureNoNewerSnapshot", () => {
   it("should accept a push when the repository matches the last sync", () => {
     const repoLatest: ResticSnapshot = {
@@ -137,147 +162,98 @@ describe("ensureNoNewerSnapshot", () => {
   });
 });
 
-describe("importPulledSecrets", () => {
-  it("should import json files as project secrets", async () => {
-    const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}`);
+describe("readSnapshotSecrets", () => {
+  async function withDir(
+    files: Record<string, unknown>,
+    run: (dir: string) => Promise<void>,
+  ): Promise<void> {
+    const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}-${Math.random()}`);
     await fse.ensureDir(dir);
-    await fse.writeJson(path.join(dir, "api-keys.json"), { KEY1: "value1" });
-    await fse.writeJson(path.join(dir, "db.json"), {
-      USER: "user",
-      PORT: 5432,
-    });
-    await fse.writeFile(path.join(dir, "ignored.txt"), "not json");
+    try {
+      for (const [name, content] of Object.entries(files)) {
+        await snapshotFile(dir, name, content);
+      }
+      await run(dir);
+    } finally {
+      await fse.remove(dir);
+    }
+  }
 
-    let replaced: Secret[] | null = null;
-    const dataApi = {
-      SecretsDataReplaceForProject: async (
-        _context: Span,
-        projectId: string,
-        secrets: Secret[],
-      ) => {
-        expect(projectId).toBe("test-project");
-        replaced = secrets;
+  it("should parse json files into flat key/value secrets", async () => {
+    await withDir(
+      {
+        "api-keys.json": { KEY1: "value1" },
+        "db.json": { USER: "user", PORT: 5432 },
+        "ignored.txt": "not json",
       },
-    };
-
-    const project = makeProject();
-    project.id = "test-project";
-    const summary = await importPulledSecrets(span(), project, dir, dataApi);
-
-    await fse.remove(dir);
-
-    expect(summary.secrets).toBe(2);
-    expect(summary.keys).toBe(3);
-    expect(replaced).not.toBeNull();
-    const secrets = replaced as unknown as Secret[];
-    expect(secrets.map((s) => s.name).sort()).toEqual(["api-keys", "db"]);
-    expect(secrets.find((s) => s.name === "db")?.data).toEqual({
-      USER: "user",
-      PORT: "5432",
-    });
+      async (dir) => {
+        const secrets = await readSnapshotSecrets(dir);
+        expect(secrets.map((s) => s.name).sort()).toEqual(["api-keys", "db"]);
+        expect(secrets.find((s) => s.name === "db")?.data).toEqual({
+          USER: "user",
+          PORT: "5432",
+        });
+      },
+    );
   });
 
   it("should reject invalid secret file names", async () => {
-    const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}-bad`);
-    await fse.ensureDir(dir);
-    await fse.writeJson(path.join(dir, "with space.json"), { KEY: "value" });
-    const project = makeProject();
-    try {
-      await importPulledSecrets(span(), project, dir, {
-        SecretsDataReplaceForProject: async () => undefined,
+    await withDir({ "with space.json": { KEY: "value" } }, async (dir) => {
+      await expect(readSnapshotSecrets(dir)).rejects.toMatchObject({
+        statusCode: 422,
       });
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ResticSyncError);
-      expect((e as ResticSyncError).statusCode).toBe(422);
-      expect((e as Error).message).toContain("Invalid secret file name");
-    } finally {
-      await fse.remove(dir);
-    }
+    });
   });
 
   it("should reject invalid secret file content", async () => {
-    const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}-bad-content`);
-    await fse.ensureDir(dir);
-    await fse.writeFile(
-      path.join(dir, "bad.json"),
-      JSON.stringify({ KEY: { nested: 1 } }),
+    await withDir(
+      { "bad.json": { KEY: { nested: 1 } } },
+      async (dir) => {
+        await expect(readSnapshotSecrets(dir)).rejects.toMatchObject({
+          statusCode: 422,
+        });
+      },
     );
-    const project = makeProject();
-    try {
-      await importPulledSecrets(span(), project, dir, {
-        SecretsDataReplaceForProject: async () => undefined,
-      });
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ResticSyncError);
-      expect((e as ResticSyncError).statusCode).toBe(422);
-    } finally {
-      await fse.remove(dir);
-    }
   });
 
-  it("should refuse to replace the secrets when the snapshot holds only ignored files", async () => {
-    const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}-ignored`);
-    await fse.ensureDir(dir);
-    await fse.writeFile(path.join(dir, "notes.txt"), "not a json secret");
-    const replace = jest.fn().mockResolvedValue(undefined);
-    const project = makeProject();
-    try {
-      await importPulledSecrets(span(), project, dir, {
-        SecretsDataReplaceForProject: replace,
+  it("should refuse a snapshot holding only ignored files", async () => {
+    await withDir({ "notes.txt": "not a json secret" }, async (dir) => {
+      await expect(readSnapshotSecrets(dir)).rejects.toMatchObject({
+        statusCode: 422,
+        message: expect.stringContaining("refusing to replace"),
       });
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ResticSyncError);
-      expect((e as ResticSyncError).statusCode).toBe(422);
-      expect((e as Error).message).toContain("refusing to replace");
-      expect(replace).not.toHaveBeenCalled();
-    } finally {
-      await fse.remove(dir);
-    }
-  });
-
-  it("should replace with an empty set when the snapshot directory is empty", async () => {
-    const dir = path.join(os.tmpdir(), `rsm-test-${Date.now()}-empty`);
-    await fse.ensureDir(dir);
-    const replace = jest.fn().mockResolvedValue(undefined);
-    const project = makeProject();
-    project.id = "test-project";
-    const summary = await importPulledSecrets(span(), project, dir, {
-      SecretsDataReplaceForProject: replace,
     });
-    await fse.remove(dir);
+  });
 
-    expect(summary.secrets).toBe(0);
-    expect(replace).toHaveBeenCalledWith(
-      expect.anything(),
-      "test-project",
-      [],
-    );
+  it("should accept an empty snapshot directory as an empty set", async () => {
+    await withDir({}, async (dir) => {
+      await expect(readSnapshotSecrets(dir)).resolves.toEqual([]);
+    });
   });
 });
 
 describe("ResticSyncPull", () => {
-  it("should record the pinned snapshot and the content hash", async () => {
+  it("should replace the secrets and record the pinned snapshot atomically", async () => {
     const snapshots: ResticSnapshot[] = [
       { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
     ];
-    const client = mockClient({ snapshots: jest.fn().mockResolvedValue(snapshots) });
+    const client = mockClient({
+      snapshots: jest.fn().mockResolvedValue(snapshots),
+    });
 
-    const secrets = [makeSecret("api", { K1: "v1" })];
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
-      SecretsDataListForProject: jest.fn().mockResolvedValue(secrets),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const current = [makeSecret("api", { K1: "v1" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest.fn(async () => current),
+    });
 
     const result = await ResticSyncPull(
       span(),
       testConfig(),
-      makeProject(),
+      dbProject,
       "snapshot-1",
+      undefined,
       dataApi,
     );
 
@@ -285,15 +261,29 @@ describe("ResticSyncPull", () => {
       "snapshot-1",
       expect.stringContaining("restore"),
     );
-    expect(result.snapshotId).toBe("snapshot-1");
-    expect(result.secrets).toBe(1);
-    expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.any(String),
-      "snapshot-1",
-      "2026-01-01T10:00:00Z",
-      computeSecretsHash(secrets),
-    );
+    expect(result).toMatchObject({
+      snapshotId: "snapshot-1",
+      snapshotTime: "2026-01-01T10:00:00Z",
+      secrets: 1,
+      keys: 1,
+    });
+    const replaceArgs = dataApi.SecretsDataReplaceForProject.mock
+      .calls[0] as unknown as [
+      unknown,
+      string,
+      Secret[],
+      { snapshotId: string; snapshotTime: string; contentHash: string },
+    ];
+    expect(replaceArgs[0]).toEqual(expect.anything());
+    expect(replaceArgs[1]).toBe("test-project");
+    expect(replaceArgs[2].map((s: Secret) => s.name)).toEqual(["api"]);
+    expect(replaceArgs[3]).toEqual({
+      snapshotId: "snapshot-1",
+      snapshotTime: "2026-01-01T10:00:00Z",
+      contentHash: computeSecretsHash(replaceArgs[2]),
+    });
+    // The state is written inside the replace transaction, never separately.
+    expect(dataApi.ProjectsDataUpdateSyncState).not.toHaveBeenCalled();
   });
 
   it("should list the snapshots only once per pull", async () => {
@@ -301,18 +291,17 @@ describe("ResticSyncPull", () => {
       .fn()
       .mockResolvedValue([{ id: "snapshot-1", time: "2026-01-01T10:00:00Z" }]);
     mockClient({ snapshots });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+    });
 
     await ResticSyncPull(
       span(),
       testConfig(),
-      makeProject(),
+      dbProject,
       "snapshot-1",
+      undefined,
       dataApi,
     );
 
@@ -321,49 +310,128 @@ describe("ResticSyncPull", () => {
 
   it("should reject a pull without a snapshot id with 400", async () => {
     const client = mockClient();
-    try {
-      await ResticSyncPull(span(), testConfig(), makeProject(), "", {
-        ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      });
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ResticSyncError);
-      expect((e as ResticSyncError).statusCode).toBe(400);
-    }
+    await expect(
+      ResticSyncPull(span(), testConfig(), makeProject(), "", undefined, makeDataApi()),
+    ).rejects.toMatchObject({ statusCode: 400 });
     expect(client.restore).not.toHaveBeenCalled();
   });
 
   it("should reject a pull when the repository moved past the pinned snapshot", async () => {
-    // The preview pinned snapshot-1, but another writer pushed snapshot-2
     mockClient({
       snapshots: jest.fn().mockResolvedValue([
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
         { id: "snapshot-2", time: "2026-02-01T10:00:00Z" },
       ]),
     });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const dataApi = makeDataApi();
+
+    await expect(
+      ResticSyncPull(
+        span(),
+        testConfig(),
+        makeProject(),
+        "snapshot-1",
+        undefined,
+        dataApi,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("snapshot-2") });
+
+    expect(dataApi.SecretsDataReplaceForProject).not.toHaveBeenCalled();
+    expect(dataApi.ProjectsDataUpdateSyncState).not.toHaveBeenCalled();
+  });
+
+  it("should reject a pull with 409 when the previewed content changed", async () => {
+    mockClient({
+      snapshots: jest
+        .fn()
+        .mockResolvedValue([
+          { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+        ]),
+    });
+    const current = [makeSecret("api", { K1: "edited-during-preview" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest.fn(async () => current),
+    });
+
+    // The token captured by the preview; secrets moved since then.
+    const previewHash = computeSecretsHash([
+      makeSecret("api", { K1: "previewed" }),
+    ]);
 
     try {
       await ResticSyncPull(
         span(),
         testConfig(),
-        makeProject(),
+        dbProject,
         "snapshot-1",
+        previewHash,
         dataApi,
       );
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(ResticSyncError);
       expect((e as ResticSyncError).statusCode).toBe(409);
-      expect((e as Error).message).toContain("snapshot-2");
+      expect((e as ResticSyncError).code).toBe(SYNC_PREVIEW_STALE_CODE);
     }
     expect(dataApi.SecretsDataReplaceForProject).not.toHaveBeenCalled();
-    expect(dataApi.ProjectsDataUpdateSyncState).not.toHaveBeenCalled();
+  });
+
+  it("should capture the current hash before the restore when no token is sent", async () => {
+    mockClient({
+      snapshots: jest
+        .fn()
+        .mockResolvedValue([
+          { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+        ]),
+    });
+    const current = [makeSecret("api", { K1: "v1" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest.fn(async () => current),
+    });
+
+    await ResticSyncPull(
+      span(),
+      testConfig(),
+      dbProject,
+      "snapshot-1",
+      undefined,
+      dataApi,
+    );
+
+    expect(dataApi.SecretsDataReplaceForProject).toHaveBeenCalled();
+  });
+
+  it("should return 404 when the project was deleted during the restore", async () => {
+    mockClient({
+      snapshots: jest
+        .fn()
+        .mockResolvedValue([
+          { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+        ]),
+    });
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest
+        .fn()
+        .mockResolvedValueOnce(dbProject)
+        .mockResolvedValueOnce(null),
+    });
+
+    await expect(
+      ResticSyncPull(
+        span(),
+        testConfig(),
+        dbProject,
+        "snapshot-1",
+        undefined,
+        dataApi,
+      ),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(dataApi.SecretsDataReplaceForProject).not.toHaveBeenCalled();
   });
 
   it("should restrict restored files to 0600 before reading them", async () => {
@@ -382,18 +450,17 @@ describe("ResticSyncPull", () => {
           await fse.chmod(target, 0o755);
         }),
     });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+    });
 
     await ResticSyncPull(
       span(),
       testConfig(),
-      makeProject(),
+      dbProject,
       "snapshot-1",
+      undefined,
       dataApi,
     );
 
@@ -408,57 +475,20 @@ describe("ResticSyncPull", () => {
   it("should fail when the repository is empty", async () => {
     mockClient();
     await expect(
-      ResticSyncPull(span(), testConfig(), makeProject(), "snapshot-1", {
-        ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      }),
+      ResticSyncPull(
+        span(),
+        testConfig(),
+        makeProject(),
+        "snapshot-1",
+        undefined,
+        makeDataApi(),
+      ),
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
 describe("ResticSyncPush", () => {
-  it("should record the pushed snapshot and the content hash", async () => {
-    const before: ResticSnapshot[] = [
-      { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
-    ];
-    const client = mockClient({
-      snapshots: jest.fn().mockResolvedValue(before),
-      backup: jest.fn().mockResolvedValue("snapshot-2"),
-      snapshot: jest.fn().mockResolvedValue({
-        id: "snapshot-2",
-        time: "2026-02-01T10:00:00Z",
-      }),
-    });
-
-    const secrets = [makeSecret("api", { K1: "v1" })];
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataListForProject: jest.fn().mockResolvedValue(secrets),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
-
-    const project = makeProject();
-    const result = await ResticSyncPush(
-      span(),
-      testConfig(),
-      project,
-      undefined,
-      dataApi,
-    );
-
-    expect(client.backup).toHaveBeenCalled();
-    expect(client.snapshot).toHaveBeenCalledWith("snapshot-2");
-    expect(result.snapshotId).toBe("snapshot-2");
-    expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
-      expect.anything(),
-      project.id,
-      "snapshot-2",
-      "2026-02-01T10:00:00Z",
-      computeSecretsHash(secrets),
-    );
-  });
-
-  it("should record the snapshot reported by the backup, not a concurrent latest", async () => {
-    // Another writer pushes snapshot-3 while our backup creates snapshot-2
+  it("should record the pushed snapshot and the pushed content hash", async () => {
     mockClient({
       snapshots: jest.fn().mockResolvedValue([
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
@@ -469,28 +499,133 @@ describe("ResticSyncPush", () => {
         time: "2026-02-01T10:00:00Z",
       }),
     });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+
+    const secrets = [makeSecret("api", { K1: "v1" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest.fn(async () => secrets),
+    });
 
     const result = await ResticSyncPush(
       span(),
       testConfig(),
-      makeProject(),
-      "alice",
+      dbProject,
+      undefined,
       dataApi,
     );
 
     expect(result.snapshotId).toBe("snapshot-2");
     expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
       expect.anything(),
-      expect.any(String),
+      "test-project",
       "snapshot-2",
       "2026-02-01T10:00:00Z",
-      expect.any(String),
+      computeSecretsHash(secrets),
+      computeSecretsHash(secrets),
     );
+  });
+
+  it("should keep an edit made during the backup visible as a local change", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+      backup: jest.fn().mockResolvedValue("snapshot-2"),
+      snapshot: jest.fn().mockResolvedValue({
+        id: "snapshot-2",
+        time: "2026-02-01T10:00:00Z",
+      }),
+    });
+
+    const pushed = [makeSecret("api", { K1: "v1" })];
+    const fresh = [makeSecret("api", { K1: "edited-during-backup" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest
+        .fn()
+        .mockResolvedValueOnce(pushed)
+        .mockResolvedValueOnce(fresh),
+    });
+
+    await ResticSyncPush(
+      span(),
+      testConfig(),
+      dbProject,
+      undefined,
+      dataApi,
+    );
+
+    expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
+      expect.anything(),
+      "test-project",
+      "snapshot-2",
+      "2026-02-01T10:00:00Z",
+      computeSecretsHash(pushed),
+      computeSecretsHash(fresh),
+    );
+  });
+
+  it("should abort with 409 when another synchronization moved the state", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+      backup: jest.fn().mockResolvedValue("snapshot-2"),
+      snapshot: jest.fn().mockResolvedValue({
+        id: "snapshot-2",
+        time: "2026-02-01T10:00:00Z",
+      }),
+    });
+
+    const observed = makeProject();
+    const moved = makeProject({ lastSyncSnapshotId: "snapshot-9" });
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest
+        .fn()
+        .mockResolvedValueOnce(observed)
+        .mockResolvedValueOnce(moved),
+    });
+
+    try {
+      await ResticSyncPush(span(), testConfig(), observed, undefined, dataApi);
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResticSyncError);
+      expect((e as ResticSyncError).statusCode).toBe(409);
+      expect((e as Error).message).toContain(
+        "Another synchronization completed while pushing",
+      );
+    }
+    expect(dataApi.ProjectsDataUpdateSyncState).not.toHaveBeenCalled();
+  });
+
+  it("should record the snapshot reported by the backup, not a concurrent latest", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+      backup: jest.fn().mockResolvedValue("snapshot-2"),
+      snapshot: jest.fn().mockResolvedValue({
+        id: "snapshot-2",
+        time: "2026-02-01T10:00:00Z",
+      }),
+    });
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+    });
+
+    const result = await ResticSyncPush(
+      span(),
+      testConfig(),
+      dbProject,
+      "alice",
+      dataApi,
+    );
+
+    expect(result.snapshotId).toBe("snapshot-2");
   });
 
   it("should fall back to the single new snapshot when the summary id is missing", async () => {
@@ -509,16 +644,15 @@ describe("ResticSyncPush", () => {
         .mockResolvedValueOnce([s1, s2]),
       backup: jest.fn().mockResolvedValue(null),
     });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+    });
 
     const result = await ResticSyncPush(
       span(),
       testConfig(),
-      makeProject(),
+      dbProject,
       undefined,
       dataApi,
     );
@@ -534,20 +668,13 @@ describe("ResticSyncPush", () => {
       ]),
       backup: jest.fn().mockResolvedValue(null),
     });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+    });
 
     try {
-      await ResticSyncPush(
-        span(),
-        testConfig(),
-        makeProject(),
-        undefined,
-        dataApi,
-      );
+      await ResticSyncPush(span(), testConfig(), dbProject, undefined, dataApi);
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(ResticSyncError);
@@ -563,17 +690,13 @@ describe("ResticSyncPush", () => {
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       ]),
     });
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const dbProject = makeProject();
     await ResticSyncPush(
       span(),
       testConfig(),
-      makeProject(),
+      dbProject,
       "alice",
-      dataApi,
+      makeDataApi({ ProjectsDataGet: jest.fn(async () => dbProject) }),
     );
     expect(client.backup).toHaveBeenCalledWith(
       expect.stringContaining("secrets"),
@@ -594,7 +717,7 @@ describe("ResticSyncPush", () => {
       id: "snapshot-3",
       time: "2026-03-01T10:00:00Z",
     };
-    // Push A (running first under the lock) lists [s1] and creates s2;
+    // Push A (running first under the queue) lists [s1] and creates s2;
     // push B lists [s1, s2] and creates s3.
     mockClient({
       snapshots: jest
@@ -611,41 +734,43 @@ describe("ResticSyncPush", () => {
     });
 
     const dbProject = makeProject();
-    const dataApi = {
+    const dataApi = makeDataApi({
       ProjectsDataGet: jest.fn(async () => dbProject),
       SecretsDataListForProject: jest
         .fn()
         .mockResolvedValue([makeSecret("api", { K1: "v1" })]),
       ProjectsDataUpdateSyncState: jest.fn(
-        async (_context, _id, snapshotId: string, snapshotTime: string) => {
+        async (
+          _context,
+          _id,
+          snapshotId: string,
+          snapshotTime: string,
+        ) => {
           dbProject.lastSyncSnapshotId = snapshotId;
           dbProject.lastSyncSnapshotTime = snapshotTime;
         },
       ),
-    };
+    });
 
-    // Both routes read the project before acquiring the sync lock; the
-    // calls share the project id so the per-project sync lock serializes
-    // them deterministically (call order = Promise.all argument order)
-    const firstProject = makeProject();
     const [first, second] = await Promise.all([
-      ResticSyncPush(span(), testConfig(), firstProject, undefined, dataApi),
+      ResticSyncPush(span(), testConfig(), dbProject, undefined, dataApi),
       ResticSyncPush(
         span(),
         testConfig(),
-        makeProject({ id: firstProject.id }),
+        makeProject({ id: dbProject.id }),
         undefined,
         dataApi,
       ),
     ]);
 
-    expect(dataApi.ProjectsDataGet).toHaveBeenCalledTimes(2);
+    // Project read at the start of each push and again in its write section
+    expect(dataApi.ProjectsDataGet).toHaveBeenCalledTimes(4);
     expect(first.snapshotId).toBe("snapshot-2");
     expect(second.snapshotId).toBe("snapshot-3");
     expect(dbProject.lastSyncSnapshotId).toBe("snapshot-3");
   });
 
-  it("should re-check the conflict against the fresh project state under the lock", async () => {
+  it("should re-check the conflict against the fresh project state under the queue", async () => {
     const s1: ResticSnapshot = {
       id: "snapshot-1",
       time: "2026-01-01T10:00:00Z",
@@ -656,12 +781,10 @@ describe("ResticSyncPush", () => {
     };
     mockClient({ snapshots: jest.fn().mockResolvedValue([s1, s2]) });
 
-    const dataApi = {
+    const dataApi = makeDataApi({
       ProjectsDataGet: jest.fn(async () => makeProject()),
-      SecretsDataListForProject: jest.fn().mockResolvedValue([]),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
-    // Stale copy from before the lock: it believes the project never synced
+    });
+    // Stale copy from before the queue: it believes the project never synced
     const stale = makeProject({
       lastSyncSnapshotId: "",
       lastSyncSnapshotTime: "",
@@ -676,7 +799,97 @@ describe("ResticSyncPush", () => {
       // The fresh state (snapshot-1) was used, not the stale copy
       expect((e as Error).message).toContain("more recent snapshot");
     }
-    expect(dataApi.ProjectsDataGet).toHaveBeenCalled();
+  });
+});
+
+describe("resolveCreatedSnapshot", () => {
+  function clientWith(snapshotResults: (ResticSnapshot | null)[], listings: ResticSnapshot[][] = []) {
+    return {
+      snapshot: jest
+        .fn()
+        .mockImplementation(async () => snapshotResults.shift() ?? null),
+      snapshots: jest
+        .fn()
+        .mockImplementation(async () => listings.shift() ?? []),
+    } as any;
+  }
+
+  it("should retry a lagging metadata read and return the snapshot", async () => {
+    const created: ResticSnapshot = {
+      id: "snapshot-2",
+      time: "2026-02-01T10:00:00Z",
+    };
+    const client = clientWith([null, null, created]);
+    const sleep = jest.fn(async () => undefined);
+
+    const result = await resolveCreatedSnapshot(
+      client,
+      "snapshot-2",
+      new Set(["snapshot-1"]),
+      sleep,
+    );
+
+    expect(result).toBe(created);
+    expect(client.snapshot).toHaveBeenCalledTimes(3);
+    expect(
+      (sleep.mock.calls as unknown[][]).map((call) => call[0]),
+    ).toEqual([250, 500]);
+  });
+
+  it("should fall back to the post listing for the exact created id", async () => {
+    const created: ResticSnapshot = {
+      id: "snapshot-2",
+      time: "2026-02-01T10:00:00Z",
+    };
+    const client = clientWith(
+      [null, null, null],
+      [[{ id: "snapshot-1", time: "2026-01-01T10:00:00Z" }, created]],
+    );
+
+    const result = await resolveCreatedSnapshot(
+      client,
+      "snapshot-2",
+      new Set(["snapshot-1"]),
+      jest.fn(async () => undefined),
+    );
+
+    expect(result).toBe(created);
+  });
+
+  it("should accept the single newly appeared snapshot when the id is not readable", async () => {
+    const created: ResticSnapshot = {
+      id: "snapshot-2",
+      time: "2026-02-01T10:00:00Z",
+    };
+    const client = clientWith(
+      [null, null, null],
+      [[{ id: "snapshot-1", time: "2026-01-01T10:00:00Z" }, created]],
+    );
+
+    const result = await resolveCreatedSnapshot(
+      client,
+      "snapshot-other",
+      new Set(["snapshot-1"]),
+      jest.fn(async () => undefined),
+    );
+
+    expect(result).toBe(created);
+  });
+
+  it("should fail with 500 when no new snapshot can be identified", async () => {
+    const client = clientWith(
+      [null, null, null],
+      [[{ id: "snapshot-1", time: "2026-01-01T10:00:00Z" }]],
+    );
+
+    await expect(
+      resolveCreatedSnapshot(
+        client,
+        "snapshot-2",
+        new Set(["snapshot-1"]),
+        jest.fn(async () => undefined),
+      ),
+    ).rejects.toMatchObject({ statusCode: 500 });
   });
 });
 
@@ -826,22 +1039,23 @@ describe("ResticSyncRestoreSnapshot", () => {
       { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       { id: "snapshot-2", time: "2026-02-01T10:00:00Z" },
     ];
-    const client = mockClient({ snapshots: jest.fn().mockResolvedValue(snapshots) });
+    const client = mockClient({
+      snapshots: jest.fn().mockResolvedValue(snapshots),
+    });
 
-    const secrets = [makeSecret("api", { K1: "v1" })];
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
-      SecretsDataListForProject: jest.fn().mockResolvedValue(secrets),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const current = [makeSecret("api", { K1: "v1" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest.fn(async () => current),
+    });
 
-    const project = makeProject();
     const result = await ResticSyncRestoreSnapshot(
       span(),
       testConfig(),
-      project,
+      dbProject,
       "snapshot-1",
+      undefined,
       dataApi,
     );
 
@@ -849,15 +1063,23 @@ describe("ResticSyncRestoreSnapshot", () => {
       "snapshot-1",
       expect.stringContaining("restore"),
     );
-    expect(result.snapshotId).toBe("snapshot-1");
-    expect(result.secrets).toBe(1);
-    expect(dataApi.ProjectsDataUpdateSyncState).toHaveBeenCalledWith(
-      expect.anything(),
-      project.id,
-      "snapshot-1",
-      "2026-01-01T10:00:00Z",
-      computeSecretsHash(secrets),
-    );
+    expect(result).toMatchObject({
+      snapshotId: "snapshot-1",
+      secrets: 1,
+      keys: 1,
+    });
+    const replaceArgs = dataApi.SecretsDataReplaceForProject.mock
+      .calls[0] as unknown as [
+      unknown,
+      string,
+      Secret[],
+      { snapshotId: string; snapshotTime: string; contentHash: string },
+    ];
+    expect(replaceArgs[3]).toEqual({
+      snapshotId: "snapshot-1",
+      snapshotTime: "2026-01-01T10:00:00Z",
+      contentHash: computeSecretsHash(replaceArgs[2]),
+    });
   });
 
   it("should reject an unknown snapshot id with 404", async () => {
@@ -866,19 +1088,46 @@ describe("ResticSyncRestoreSnapshot", () => {
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       ]),
     });
-    try {
-      await ResticSyncRestoreSnapshot(
+    await expect(
+      ResticSyncRestoreSnapshot(
         span(),
         testConfig(),
         makeProject(),
         "unknown-id",
-        { ProjectsDataGet: jest.fn().mockResolvedValue(null) },
-      );
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ResticSyncError);
-      expect((e as ResticSyncError).statusCode).toBe(404);
-    }
+        undefined,
+        makeDataApi(),
+      ),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("should reject a restore with 409 when the previewed content changed", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+    });
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest
+        .fn()
+        .mockResolvedValue([makeSecret("api", { K1: "edited" })]),
+    });
+
+    await expect(
+      ResticSyncRestoreSnapshot(
+        span(),
+        testConfig(),
+        dbProject,
+        "snapshot-1",
+        "stale-preview-hash",
+        dataApi,
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: SYNC_PREVIEW_STALE_CODE,
+    });
+    expect(dataApi.SecretsDataReplaceForProject).not.toHaveBeenCalled();
   });
 });
 
@@ -888,15 +1137,15 @@ describe("ResticSyncDiscardLocalChanges", () => {
       lastSyncSnapshotId: "",
       lastSyncSnapshotTime: "",
     });
-    try {
-      await ResticSyncDiscardLocalChanges(span(), testConfig(), project, {
-        ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      });
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ResticSyncError);
-      expect((e as ResticSyncError).statusCode).toBe(409);
-    }
+    await expect(
+      ResticSyncDiscardLocalChanges(
+        span(),
+        testConfig(),
+        project,
+        undefined,
+        makeDataApi({ ProjectsDataGet: jest.fn(async () => project) }),
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("should restore the last synchronized snapshot", async () => {
@@ -905,19 +1154,18 @@ describe("ResticSyncDiscardLocalChanges", () => {
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       ]),
     });
-    const secrets = [makeSecret("api", { K1: "v1" })];
-    const dataApi = {
-      ProjectsDataGet: jest.fn().mockResolvedValue(null),
-      SecretsDataReplaceForProject: jest.fn().mockResolvedValue(undefined),
-      SecretsDataListForProject: jest.fn().mockResolvedValue(secrets),
-      ProjectsDataUpdateSyncState: jest.fn().mockResolvedValue(undefined),
-    };
+    const current = [makeSecret("api", { K1: "v1" })];
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest.fn(async () => current),
+    });
 
-    const project = makeProject();
     const result = await ResticSyncDiscardLocalChanges(
       span(),
       testConfig(),
-      project,
+      dbProject,
+      undefined,
       dataApi,
     );
 
@@ -926,6 +1174,34 @@ describe("ResticSyncDiscardLocalChanges", () => {
       expect.any(String),
     );
     expect(result.snapshotId).toBe("snapshot-1");
+  });
+
+  it("should reject a discard with 409 when the previewed content changed", async () => {
+    mockClient({
+      snapshots: jest.fn().mockResolvedValue([
+        { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
+      ]),
+    });
+    const dbProject = makeProject();
+    const dataApi = makeDataApi({
+      ProjectsDataGet: jest.fn(async () => dbProject),
+      SecretsDataListForProject: jest
+        .fn()
+        .mockResolvedValue([makeSecret("api", { K1: "edited" })]),
+    });
+
+    await expect(
+      ResticSyncDiscardLocalChanges(
+        span(),
+        testConfig(),
+        dbProject,
+        "stale-preview-hash",
+        dataApi,
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: SYNC_PREVIEW_STALE_CODE,
+    });
   });
 });
 

@@ -11,8 +11,9 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Editing a secret allows updating, adding and removing key/value entries
 - [x] Duplicate keys are rejected with an error when saving a secret
 - [x] Secret updates are atomic: a rename and the data changes are applied in one conditional database update, and reads expose a numeric `version` that updates must echo. A stale version is rejected with HTTP 409 (`SECRET_VERSION_CONFLICT`) and never overwrites a concurrent save
+- [x] Every secret mutation (create, update, delete, copy-key) records the new project content hash in the same database transaction, so a concurrent push or preview never observes a secret list that disagrees with its hash
 - [x] The web editor handles a stale version by reloading the secret, keeping the unsaved edits and asking to review and save again; when the secret was deleted meanwhile, the kept edits are saved as a new secret
-- [x] Copying a key to another secret uses a dedicated partial update that changes only that key (with its own version check), so keys modified by another user are never overwritten
+- [x] Copying a key to another secret is a real partial merge: the secret is re-read under the project write lock, only the selected key is changed and the update is conditional on the fresh row version, retried a bounded number of times when another writer wins; unrelated keys are always preserved and the same key follows last-writer-wins
 - [x] A secret can be duplicated with all its key/value entries under a new name (prefilled with `<name>-copy`)
 - [x] A secret can be renamed; the new name follows the creation rules and must be unique within the project (validation and conflict errors shown inline)
 - [x] A key/value entry can be copied to another secret of the same project, the target secret and key name being chosen in a dialog (an existing target key is overwritten after an explicit warning)
@@ -33,6 +34,8 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] Before pushing, the application checks whether the repository contains a more recent snapshot than the last one synchronized by this project
 - [x] Push is rejected with a conflict error when a more recent snapshot exists (the user must pull first)
 - [x] After a successful push, the project records the snapshot created by its own backup — the `snapshot_id` of the `restic backup --json` summary and its exact metadata time — never the repository latest (which may belong to another writer); a backup whose created snapshot cannot be identified fails without updating the sync state
+- [x] When restic does not return the created snapshot id directly, the exact id is resolved by re-reading it (bounded retries) and then from a fresh snapshot listing of exactly one new snapshot; anything ambiguous fails without updating the sync state
+- [x] Push records the pushed content hash and the current content hash together: edits made during the backup stay visible as local changes instead of being hidden by the push. If another synchronization completed while pushing, the push answers 409 instead of overwriting its sync state
 - [x] The pushed snapshot is tagged with the pushing user (restic tag `pushed-by:<user>`)
 
 ## Pull (restore from restic repository)
@@ -41,6 +44,8 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] A pull requires the previewed snapshot id: missing or empty ids are rejected with HTTP 400
 - [x] When the repository gained a newer snapshot after the preview, the pull is rejected with HTTP 409 asking to preview again, and no secret is replaced
 - [x] After a successful pull, the project records the pinned snapshot id and the time from the same snapshot listing
+- [x] The pull confirmation is a compare-and-swap: it echoes the previewed secrets `contentHash`, which is re-checked under the project write lock before the replacement; a mismatch answers HTTP 409 `SYNC_PREVIEW_STALE` and no secret is changed. A request without the token remains compatible (the current content is captured when it starts)
+- [x] The secret replacement, the recorded sync state and the content hashes are written in one database transaction: a failure leaves the previous secrets and sync state intact
 - [x] Pull fails with a clear error when the repository is empty
 - [x] A pull can be previewed before it is confirmed: the server computes the diff between the current project secrets and the latest snapshot content (secrets and keys added, changed or removed); no secret value is ever sent to the client, only statuses and value lengths
 - [x] The pull preview lists the repository snapshots exactly once and returns the `snapshotId`/`snapshotTime` it diffed, which the execution must send back as the pin
@@ -59,6 +64,7 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] The UI can list the snapshot history of a project repository (id and time, most recent first)
 - [x] Any snapshot of the history can be restored as the project secrets, after an explicit confirmation
 - [x] Restoring a snapshot replaces the project secrets and records the restored snapshot as the last synchronized state
+- [x] Snapshot restore and discard use the same compare-and-swap token as pull: the preview returns the current `contentHash`, the confirmation echoes it, and a mismatch answers 409 `SYNC_PREVIEW_STALE` without changing any secret (a request without the token captures the current content when it starts)
 - [x] A snapshot restore can be previewed before it is confirmed: the server computes the diff between the current project secrets and the content of that snapshot (404 for an unknown snapshot); no secret value is ever sent to the client
 - [x] Local changes that were not pushed can be discarded: the last synchronized snapshot is restored, after an explicit confirmation
 - [x] Discarding is rejected when the project was never synchronized (there is nothing to restore)
@@ -75,9 +81,9 @@ Each project holds a set of named secrets. A secret is the equivalent of one JSO
 - [x] The .env export is produced by a single canonical serializer: values that the format would alter (empty, spaces, `=`, `#`, quotes, backslashes, CR, LF, tab and other control characters) are double-quoted with `\\`, `\"`, `\n`, `\r`, `\t` and `\uXXXX` escapes; Unicode passes through unchanged and a .env import restores the exact value
 - [x] Keys that are not valid environment variable names (`[A-Za-z_][A-Za-z0-9_]*`) are rejected by the .env export with HTTP 400 and a message pointing at the JSON export, which keeps accepting any key; the .env import rejects them with the offending line number
 - [x] Updates require the version read with the secret (`PUT .../secrets/:secretId`); a partial key update is available at `PUT .../secrets/:secretId/keys`
-- [x] A programmatic pull first calls `GET /api/projects/:id/preview/pull` and then posts the returned `snapshotId` to `POST /api/projects/:id/pull`; a repository change in between answers 409 with a "preview again" message
+- [x] A programmatic pull first calls `GET /api/projects/:id/preview/pull` and then posts the returned `snapshotId` and `contentHash` to `POST /api/projects/:id/pull`; a repository or secret change in between answers 409 with a "preview again" message (`SYNC_PREVIEW_STALE` for the secrets). Snapshot restore and discard accept the same `contentHash`; omitting it keeps working
 - [x] Sync events (push, pull, snapshot restore, discard of local changes, push conflict) emit a notification through the ecosystem notifications server when the integration is configured (`NOTIFICATIONS_API_ENDPOINT` / `NOTIFICATIONS_API_TOKEN`, disabled by default)
 - [x] Notification failures never fail the synchronization and notification payloads never contain secret values
 - [x] Notification endpoint/token changes in `config.json` are applied on reload without a restart: re-initializing replaces the single notifications client
 
-Last spec review: 2026-10-23
+Last spec review: 2026-11-03

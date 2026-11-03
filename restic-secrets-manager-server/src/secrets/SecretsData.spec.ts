@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import { Secret } from "../model/Secret";
 import {
+  SecretsDataAdd,
+  SecretsDataDelete,
   SecretsDataReplaceForProject,
   SecretsDataUpdate,
 } from "./SecretsData";
@@ -59,18 +61,65 @@ function createSecretsTable(db: Database.Database): void {
   `);
 }
 
+function createProjectsTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE projects (
+      id VARCHAR(50) PRIMARY KEY,
+      lastSyncSnapshotId VARCHAR(100),
+      lastSyncSnapshotTime VARCHAR(100),
+      lastSyncContentHash VARCHAR(100),
+      currentContentHash VARCHAR(100)
+    );
+  `);
+}
+
+function seedProject(
+  db: Database.Database,
+  id = "p1",
+  state: {
+    snapshotId?: string;
+    snapshotTime?: string;
+    lastSyncContentHash?: string;
+    currentContentHash?: string;
+  } = {},
+): void {
+  db.prepare(
+    'INSERT INTO projects ("id", "lastSyncSnapshotId", "lastSyncSnapshotTime", "lastSyncContentHash", "currentContentHash") VALUES (?, ?, ?, ?, ?)',
+  ).run(
+    id,
+    state.snapshotId ?? "",
+    state.snapshotTime ?? "",
+    state.lastSyncContentHash ?? "",
+    state.currentContentHash ?? "",
+  );
+}
+
+function projectState(db: Database.Database, id = "p1"): any {
+  return db.prepare('SELECT * FROM projects WHERE "id" = ?').get(id);
+}
+
+function setupSqlite(db: Database.Database): void {
+  dbUtils.DbUtilsGetType.mockReturnValue("sqlite");
+  dbUtils.DbUtilsGetDatabase.mockReturnValue(db);
+  dbUtils.DbUtilsExecSQL.mockImplementation(
+    (_context: unknown, sql: string, params: unknown[]) =>
+      db.prepare(sql).run(params).changes,
+  );
+  dbUtils.DbUtilsQuerySQL.mockImplementation(
+    (_context: unknown, sql: string, params: unknown[]) =>
+      db.prepare(sql).all(params),
+  );
+}
+
 describe("SecretsDataReplaceForProject (sqlite)", () => {
   let db: Database.Database;
 
   beforeEach(() => {
+    jest.clearAllMocks();
     db = new Database(":memory:");
     createSecretsTable(db);
-    dbUtils.DbUtilsGetType.mockReturnValue("sqlite");
-    dbUtils.DbUtilsGetDatabase.mockReturnValue(db);
-    dbUtils.DbUtilsExecSQL.mockImplementation(
-      (_context: unknown, sql: string, params: unknown[]) =>
-        db.prepare(sql).run(params).changes,
-    );
+    createProjectsTable(db);
+    setupSqlite(db);
   });
 
   afterEach(() => {
@@ -129,6 +178,94 @@ describe("SecretsDataReplaceForProject (sqlite)", () => {
       { projectId: "p1", name: "c" },
     ]);
   });
+
+  it("should write the snapshot state and both hashes with the secrets", async () => {
+    seedProject(db);
+
+    await SecretsDataReplaceForProject(undefined, "p1", [makeSecret("c")], {
+      snapshotId: "snap-1",
+      snapshotTime: "2026-11-03T10:00:00Z",
+      contentHash: "hash-new",
+    });
+
+    expect(projectState(db)).toEqual({
+      id: "p1",
+      lastSyncSnapshotId: "snap-1",
+      lastSyncSnapshotTime: "2026-11-03T10:00:00Z",
+      lastSyncContentHash: "hash-new",
+      currentContentHash: "hash-new",
+    });
+  });
+
+  it("should roll back the sync state when an insert fails", async () => {
+    seedProject(db, "p1", {
+      snapshotId: "snap-old",
+      snapshotTime: "2026-01-01T00:00:00Z",
+      lastSyncContentHash: "hash-old",
+      currentContentHash: "hash-old",
+    });
+
+    await expect(
+      SecretsDataReplaceForProject(undefined, "p1", [
+        makeSecret("x"),
+        makeSecret("x"),
+      ], {
+        snapshotId: "snap-new",
+        snapshotTime: "2026-11-03T10:00:00Z",
+        contentHash: "hash-new",
+      }),
+    ).rejects.toThrow();
+
+    expect(projectState(db)).toMatchObject({
+      lastSyncSnapshotId: "snap-old",
+      lastSyncContentHash: "hash-old",
+      currentContentHash: "hash-old",
+    });
+  });
+});
+
+describe("SecretsDataAdd (sqlite)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db = new Database(":memory:");
+    createSecretsTable(db);
+    createProjectsTable(db);
+    setupSqlite(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should insert the secret and update the project hash in one transaction", async () => {
+    seedProject(db);
+
+    await SecretsDataAdd(undefined, makeSecret("a", { K: "v" }), "hash-1");
+
+    expect(names(db)).toEqual(["a"]);
+    expect(projectState(db).currentContentHash).toBe("hash-1");
+  });
+
+  it("should roll back the hash when the insert violates the unique name", async () => {
+    seedProject(db, "p1", { currentContentHash: "hash-old" });
+    seed(db, makeSecret("a"));
+
+    await expect(
+      SecretsDataAdd(undefined, makeSecret("a"), "hash-new"),
+    ).rejects.toThrow();
+
+    expect(projectState(db).currentContentHash).toBe("hash-old");
+  });
+
+  it("should leave the project untouched when no hash is provided", async () => {
+    seedProject(db, "p1", { currentContentHash: "hash-old" });
+
+    await SecretsDataAdd(undefined, makeSecret("a"));
+
+    expect(projectState(db).currentContentHash).toBe("hash-old");
+  });
 });
 
 describe("SecretsDataUpdate (sqlite)", () => {
@@ -138,16 +275,8 @@ describe("SecretsDataUpdate (sqlite)", () => {
     jest.clearAllMocks();
     db = new Database(":memory:");
     createSecretsTable(db);
-    dbUtils.DbUtilsGetType.mockReturnValue("sqlite");
-    dbUtils.DbUtilsGetDatabase.mockReturnValue(db);
-    dbUtils.DbUtilsExecSQL.mockImplementation(
-      (_context: unknown, sql: string, params: unknown[]) =>
-        db.prepare(sql).run(params).changes,
-    );
-    dbUtils.DbUtilsQuerySQL.mockImplementation(
-      (_context: unknown, sql: string, params: unknown[]) =>
-        db.prepare(sql).all(params),
-    );
+    createProjectsTable(db);
+    setupSqlite(db);
   });
 
   afterEach(() => {
@@ -233,22 +362,152 @@ describe("SecretsDataUpdate (sqlite)", () => {
     expect(row.name).toBe("old");
   });
 
-  it("should await promise-returning exec/query helpers (Postgres)", async () => {
+  it("should update the project hash with the successful update", async () => {
+    seedProject(db, "p1", { currentContentHash: "hash-old" });
+    const existing = makeSecret("old", { A: "1" });
+    seed(db, existing);
+
+    const updated = makeSecret("old", { A: "2" });
+    updated.id = existing.id;
+    const status = await SecretsDataUpdate(undefined, updated, 1, "hash-new");
+
+    expect(status).toBe("updated");
+    expect(projectState(db).currentContentHash).toBe("hash-new");
+  });
+
+  it("should keep the previous project hash on a version conflict", async () => {
+    seedProject(db, "p1", { currentContentHash: "hash-old" });
+    const existing = makeSecret("old", { A: "1" });
+    seed(db, existing);
+
+    const stale = makeSecret("old", { A: "2" });
+    stale.id = existing.id;
+    const status = await SecretsDataUpdate(undefined, stale, 2, "hash-new");
+
+    expect(status).toBe("version_conflict");
+    expect(projectState(db).currentContentHash).toBe("hash-old");
+  });
+});
+
+describe("SecretsDataDelete (sqlite)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db = new Database(":memory:");
+    createSecretsTable(db);
+    createProjectsTable(db);
+    setupSqlite(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should delete the secret and update the project hash", async () => {
+    seedProject(db, "p1", { currentContentHash: "hash-old" });
+    const existing = makeSecret("a");
+    seed(db, existing);
+
+    await SecretsDataDelete(undefined, existing.id, "p1", "hash-new");
+
+    expect(names(db)).toEqual([]);
+    expect(projectState(db).currentContentHash).toBe("hash-new");
+  });
+
+  it("should not touch the project when no hash is provided", async () => {
+    seedProject(db, "p1", { currentContentHash: "hash-old" });
+    const existing = makeSecret("a");
+    seed(db, existing);
+
+    await SecretsDataDelete(undefined, existing.id);
+
+    expect(names(db)).toEqual([]);
+    expect(projectState(db).currentContentHash).toBe("hash-old");
+  });
+});
+
+describe("SecretsData transactions (Postgres)", () => {
+  type QueryCall = [string, unknown[]?];
+
+  function makeClient(rowCounts: number[]) {
+    let queryIndex = 0;
+    const client = {
+      query: jest.fn(async (sql: string, _params?: unknown[]) => {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+          return { rowCount: null };
+        }
+        const rowCount = rowCounts[queryIndex++] ?? 1;
+        return { rowCount };
+      }),
+      release: jest.fn(),
+    };
+    return client;
+  }
+
+  function useClient(client: { query: jest.Mock; release: jest.Mock }): void {
     dbUtils.DbUtilsGetType.mockReturnValue("postgres");
-    dbUtils.DbUtilsExecSQL.mockResolvedValue(1);
-    dbUtils.DbUtilsQuerySQL.mockResolvedValue([]);
+    dbUtils.DbUtilsGetDatabase.mockReturnValue({
+      connect: jest.fn(async () => client),
+    });
+  }
+
+  function statements(client: { query: jest.Mock }): string[] {
+    return (client.query.mock.calls as QueryCall[]).map((call) => call[0]);
+  }
+
+  it("should insert the secret and the hash on a dedicated transaction", async () => {
+    const client = makeClient([1, 1]);
+    useClient(client);
+
+    await SecretsDataAdd(undefined, makeSecret("a"), "hash-1");
+
+    expect(statements(client)[0]).toBe("BEGIN");
+    expect(statements(client)[1]).toContain("INSERT INTO secrets");
+    expect(statements(client)[2]).toContain("UPDATE projects");
+    expect(statements(client)[3]).toBe("COMMIT");
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  it("should roll back the insert when the hash update fails", async () => {
+    const client = makeClient([1]);
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "ROLLBACK") {
+        return { rowCount: null };
+      }
+      if (sql.includes("UPDATE projects")) {
+        throw new Error("boom");
+      }
+      return { rowCount: 1 };
+    });
+    useClient(client);
+
+    await expect(
+      SecretsDataAdd(undefined, makeSecret("a"), "hash-1"),
+    ).rejects.toThrow("boom");
+
+    expect(statements(client)).toContain("ROLLBACK");
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  it("should update the row and the hash in one transaction", async () => {
+    const client = makeClient([1, 1]);
+    useClient(client);
 
     const secret = makeSecret("updated", { A: "1" });
-    const status = await SecretsDataUpdate(undefined, secret, 2);
+    const status = await SecretsDataUpdate(undefined, secret, 2, "hash-1");
 
     expect(status).toBe("updated");
     expect(secret.version).toBe(3);
-    expect(dbUtils.DbUtilsExecSQL).toHaveBeenCalledTimes(1);
+    expect(statements(client)[0]).toBe("BEGIN");
+    expect(statements(client)[1]).toContain("UPDATE secrets");
+    expect(statements(client)[2]).toContain("UPDATE projects");
+    expect(statements(client)[3]).toBe("COMMIT");
   });
 
-  it("should re-read the row after zero affected rows (Postgres)", async () => {
-    dbUtils.DbUtilsGetType.mockReturnValue("postgres");
-    dbUtils.DbUtilsExecSQL.mockResolvedValue(0);
+  it("should not write the hash when the update affects no row", async () => {
+    const client = makeClient([0]);
+    useClient(client);
     dbUtils.DbUtilsQuerySQL.mockResolvedValue([
       {
         id: "s1",
@@ -263,10 +522,72 @@ describe("SecretsDataUpdate (sqlite)", () => {
 
     const secret = makeSecret("renamed");
     secret.id = "s1";
-    const status = await SecretsDataUpdate(undefined, secret, 2);
+    const status = await SecretsDataUpdate(undefined, secret, 2, "hash-1");
 
     expect(status).toBe("version_conflict");
-    expect(dbUtils.DbUtilsExecSQL).toHaveBeenCalledTimes(1);
-    expect(dbUtils.DbUtilsQuerySQL).toHaveBeenCalledTimes(1);
+    expect(statements(client).some((sql) => sql.includes("UPDATE projects"))).toBe(
+      false,
+    );
+    const executed = statements(client);
+    expect(executed[executed.length - 1]).toBe("COMMIT");
+  });
+
+  it("should delete the secret and update the hash in one transaction", async () => {
+    const client = makeClient([1, 1]);
+    useClient(client);
+
+    await SecretsDataDelete(undefined, "s1", "p1", "hash-1");
+
+    expect(statements(client)[0]).toBe("BEGIN");
+    expect(statements(client)[1]).toContain("DELETE FROM secrets");
+    expect(statements(client)[2]).toContain("UPDATE projects");
+    expect(statements(client)[3]).toBe("COMMIT");
+  });
+
+  it("should replace the secrets and write the sync state in one transaction", async () => {
+    const client = makeClient([1, 1, 1]);
+    useClient(client);
+
+    await SecretsDataReplaceForProject(undefined, "p1", [makeSecret("a")], {
+      snapshotId: "snap-1",
+      snapshotTime: "2026-11-03T10:00:00Z",
+      contentHash: "hash-1",
+    });
+
+    const sql = statements(client);
+    expect(sql[0]).toBe("BEGIN");
+    expect(sql[1]).toContain("DELETE FROM secrets");
+    expect(sql[2]).toContain("INSERT INTO secrets");
+    expect(sql[3]).toContain("UPDATE projects");
+    expect(sql[4]).toBe("COMMIT");
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  it("should roll back the replace when an insert fails", async () => {
+    const client = makeClient([1]);
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "ROLLBACK") {
+        return { rowCount: null };
+      }
+      if (sql.includes("INSERT INTO secrets")) {
+        throw new Error("insert failed");
+      }
+      return { rowCount: 1 };
+    });
+    useClient(client);
+
+    await expect(
+      SecretsDataReplaceForProject(undefined, "p1", [makeSecret("a")], {
+        snapshotId: "snap-1",
+        snapshotTime: "2026-11-03T10:00:00Z",
+        contentHash: "hash-1",
+      }),
+    ).rejects.toThrow("insert failed");
+
+    expect(statements(client)).toContain("ROLLBACK");
+    expect(statements(client).some((sql) => sql.includes("UPDATE projects"))).toBe(
+      false,
+    );
+    expect(client.release).toHaveBeenCalled();
   });
 });

@@ -34,6 +34,7 @@
 import api from "../utils/api";
 import {
   buildSyncExecutionRequest,
+  shouldRefreshPreview,
   shortSnapshotId,
 } from "../utils/sync-preview";
 
@@ -107,8 +108,10 @@ async function loadPreview() {
         : props.mode;
     const res = await api.get(`/projects/${props.project.id}/preview/${endpoint}`);
     preview.value = res.data.preview;
+    return true;
   } catch (e) {
     error.value = e.response?.data?.error || "Unable to compute the change preview";
+    return false;
   } finally {
     loading.value = false;
   }
@@ -125,12 +128,23 @@ async function execute() {
       props.mode,
       props.project.id,
       pinnedSnapshotId.value,
+      preview.value?.contentHash,
     );
     const res = await api.post(request.url, request.body);
     modal.close();
     emit("done", resultMessage(res.data));
   } catch (e) {
-    error.value = e.response?.data?.error || "The operation failed";
+    if (shouldRefreshPreview(e)) {
+      // The repository or the project secrets moved since the preview:
+      // keep the modal open and recompute it before asking to confirm again.
+      const message = e.response?.data?.error || "The preview is out of date";
+      const refreshed = await loadPreview();
+      error.value = refreshed
+        ? `${message} The preview has been refreshed: review it and confirm again.`
+        : message;
+    } else {
+      error.value = e.response?.data?.error || "The operation failed";
+    }
   } finally {
     executing.value = false;
   }

@@ -50,6 +50,7 @@ import { RequestAbortSignal } from "../restic/RequestAbort";
 import { SyncNotificationsNotify } from "../restic/SyncNotifications";
 import { Config } from "../Config";
 import { DbUtilsWithLock } from "../utils-std-ts/DbUtils";
+import { ProjectWriteLocksRun } from "../restic/SyncLocks";
 
 const logger = OTelLogger().createModuleLogger("projects");
 
@@ -253,19 +254,38 @@ export class ProjectsRoutes {
       if (!project) {
         return res.status(404).send({ error: "Project Not Found" });
       }
-      await ProjectsDataDeleteCascade(span, project.id);
-      ProjectScopesRemove(project.id);
-      SyncStatusCacheInvalidate(project.id);
-      try {
-        await ProjectScopesPruneFromUsers(span, project.id);
-      } catch (e) {
-        // The deletion is complete: a dangling scope is inert, so a failed
-        // prune must not turn it into a 500. Never log secret material.
-        logger.warn(
-          `Unable to prune the deleted project scope from users: ${
-            e instanceof Error ? e.message : "unknown error"
-          }`,
-        );
+      // Serialized with the short write sections of synchronizations and
+      // secret edits: a delete cannot interleave with a replace or a state
+      // write, so it never answers 200 for a project that a sync resurrects
+      // through a foreign key failure.
+      const deleted = await ProjectWriteLocksRun(
+        project.id,
+        async () => {
+          const fresh = await ProjectsDataGet(span, project.id);
+          if (!fresh) {
+            return false;
+          }
+          await ProjectsDataDeleteCascade(span, fresh.id);
+          ProjectScopesRemove(fresh.id);
+          SyncStatusCacheInvalidate(fresh.id);
+          try {
+            await ProjectScopesPruneFromUsers(span, fresh.id);
+          } catch (e) {
+            // The deletion is complete: a dangling scope is inert, so a
+            // failed prune must not turn it into a 500. Never log secret
+            // material.
+            logger.warn(
+              `Unable to prune the deleted project scope from users: ${
+                e instanceof Error ? e.message : "unknown error"
+              }`,
+            );
+          }
+          return true;
+        },
+        span,
+      );
+      if (!deleted) {
+        return res.status(404).send({ error: "Project Not Found" });
       }
       return res.status(200).send({});
     });
@@ -275,7 +295,7 @@ export class ProjectsRoutes {
     // the repository latest changed since the preview.
     fastify.post<{
       Params: { id: string };
-      Body: { snapshotId?: unknown };
+      Body: { snapshotId?: unknown; contentHash?: unknown };
     }>("/:id/pull", async (req, res) => {
       const user = await ProjectAccessGetUser(req, res);
       if (!user) {
@@ -302,6 +322,7 @@ export class ProjectsRoutes {
           config,
           project,
           snapshotId,
+          readContentHash(req.body?.contentHash),
           undefined,
           RequestAbortSignal(req.raw, res.raw),
         );
@@ -414,8 +435,10 @@ export class ProjectsRoutes {
     );
 
     // Restore an arbitrary snapshot of the history as the project secrets
-    fastify.post<{ Params: { id: string; snapshotId: string } }>(
-      "/:id/snapshots/:snapshotId/restore",
+    fastify.post<{
+      Params: { id: string; snapshotId: string };
+      Body: { contentHash?: unknown };
+    }>("/:id/snapshots/:snapshotId/restore",
       async (req, res) => {
         const user = await ProjectAccessGetUser(req, res);
         if (!user) {
@@ -435,6 +458,7 @@ export class ProjectsRoutes {
             config,
             project,
             req.params.snapshotId,
+            readContentHash(req.body?.contentHash),
             undefined,
             RequestAbortSignal(req.raw, res.raw),
           );
@@ -551,7 +575,10 @@ export class ProjectsRoutes {
 
     // Discard the local modifications that were not pushed: restore the
     // last synchronized snapshot
-    fastify.post<{ Params: { id: string } }>("/:id/discard", async (req, res) => {
+    fastify.post<{
+      Params: { id: string };
+      Body: { contentHash?: unknown };
+    }>("/:id/discard", async (req, res) => {
       const user = await ProjectAccessGetUser(req, res);
       if (!user) {
         return;
@@ -569,6 +596,7 @@ export class ProjectsRoutes {
           span,
           config,
           project,
+          readContentHash(req.body?.contentHash),
           undefined,
           RequestAbortSignal(req.raw, res.raw),
         );
@@ -590,9 +618,16 @@ export class ProjectsRoutes {
 /** Maps restic synchronization errors to transport responses. */
 function sendSyncError(res: any, e: unknown) {
   if (e instanceof ResticSyncError) {
-    return res.status(e.statusCode).send({ error: e.message });
+    return res
+      .status(e.statusCode)
+      .send(e.code ? { error: e.message, code: e.code } : { error: e.message });
   }
   return res.status(500).send({
     error: e instanceof Error ? e.message : "Internal Error",
   });
+}
+
+/** Preview token echoed by a confirmation; absent for older clients. */
+function readContentHash(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { Project } from "../model/Project";
 import {
+  compareSnapshots,
   CONNECTION_TEST_TIMEOUT_MS,
   defaultResticRunner,
   isRepoNotInitialized,
@@ -655,6 +656,52 @@ describe("latestSnapshot", () => {
       { id: "bbbb", time: "2026-02-01T10:00:00Z" },
     ];
     expect(latestSnapshot(snapshots)?.id).toBe("cccc");
+  });
+
+  it("should compare timezone offsets numerically, not lexically", () => {
+    // 10:00+02:00 is 08:00Z, older than 09:00Z despite the larger string
+    const snapshots = [
+      { id: "aaaa", time: "2026-01-01T10:00:00+02:00" },
+      { id: "bbbb", time: "2026-01-01T09:00:00Z" },
+    ];
+    expect(latestSnapshot(snapshots)?.id).toBe("bbbb");
+    expect(
+      compareSnapshots(snapshots[0], snapshots[1]),
+    ).toBeLessThan(0);
+  });
+
+  it("should handle sub-second precision", () => {
+    const snapshots = [
+      { id: "aaaa", time: "2026-01-01T10:00:00.100Z" },
+      { id: "bbbb", time: "2026-01-01T10:00:00.500Z" },
+    ];
+    expect(latestSnapshot(snapshots)?.id).toBe("bbbb");
+  });
+
+  it("should tie-break identical times deterministically by id", () => {
+    const snapshots = [
+      { id: "aaaa", time: "2026-01-01T10:00:00Z" },
+      { id: "cccc", time: "2026-01-01T10:00:00Z" },
+      { id: "bbbb", time: "2026-01-01T10:00:00Z" },
+    ];
+    expect(latestSnapshot(snapshots)?.id).toBe("cccc");
+    expect(
+      compareSnapshots(snapshots[0], snapshots[0]),
+    ).toBe(0);
+  });
+
+  it("should treat an unparsable time as older than any valid time", () => {
+    const snapshots = [
+      { id: "aaaa", time: "not-a-date" },
+      { id: "bbbb", time: "2026-01-01T10:00:00Z" },
+    ];
+    expect(latestSnapshot(snapshots)?.id).toBe("bbbb");
+    expect(
+      compareSnapshots(
+        { id: "aaaa", time: "" },
+        { id: "bbbb", time: "not-a-date" },
+      ),
+    ).toBeLessThan(0);
   });
 });
 

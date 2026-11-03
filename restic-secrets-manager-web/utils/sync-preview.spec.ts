@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSyncExecutionRequest,
+  isSyncPreviewStale,
   keyValueHint,
   MASKED_VALUE,
   pusherLabel,
+  shouldRefreshPreview,
   shortSnapshotId,
   statusIcon,
   statusLabel,
   summarizePreview,
+  SYNC_PREVIEW_STALE,
 } from "./sync-preview";
 
 function preview(overrides = {}) {
@@ -154,15 +157,56 @@ describe("buildSyncExecutionRequest", () => {
     });
   });
 
-  it("should discard without a body", () => {
+  it("should discard with an empty body when no token is available", () => {
     expect(buildSyncExecutionRequest("discard", "p1", "snap-1234")).toEqual({
       url: "/projects/p1/discard",
+      body: {},
     });
   });
 
   it("should restore the pinned snapshot through the history route", () => {
     expect(buildSyncExecutionRequest("snapshot", "p1", "snap-1234")).toEqual({
       url: "/projects/p1/snapshots/snap-1234/restore",
+      body: {},
     });
+  });
+
+  it("should echo the preview content hash on every confirmation", () => {
+    expect(
+      buildSyncExecutionRequest("pull", "p1", "snap-1234", "hash-abc"),
+    ).toEqual({
+      url: "/projects/p1/pull",
+      body: { snapshotId: "snap-1234", contentHash: "hash-abc" },
+    });
+    expect(
+      buildSyncExecutionRequest("discard", "p1", "snap-1234", "hash-abc"),
+    ).toEqual({ url: "/projects/p1/discard", body: { contentHash: "hash-abc" } });
+    expect(
+      buildSyncExecutionRequest("snapshot", "p1", "snap-1234", "hash-abc"),
+    ).toEqual({
+      url: "/projects/p1/snapshots/snap-1234/restore",
+      body: { contentHash: "hash-abc" },
+    });
+  });
+});
+
+describe("preview staleness", () => {
+  it("should detect the SYNC_PREVIEW_STALE error code", () => {
+    expect(
+      isSyncPreviewStale({
+        response: { data: { error: "stale", code: SYNC_PREVIEW_STALE } },
+      }),
+    ).toBe(true);
+    expect(
+      isSyncPreviewStale({ response: { data: { code: "OTHER" } } }),
+    ).toBe(false);
+    expect(isSyncPreviewStale(new Error("boom"))).toBe(false);
+  });
+
+  it("should ask for a preview refresh on any 409", () => {
+    expect(shouldRefreshPreview({ response: { status: 409 } })).toBe(true);
+    expect(shouldRefreshPreview({ status: 409 })).toBe(true);
+    expect(shouldRefreshPreview({ response: { status: 500 } })).toBe(false);
+    expect(shouldRefreshPreview(new Error("boom"))).toBe(false);
   });
 });

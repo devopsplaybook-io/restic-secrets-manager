@@ -5,6 +5,7 @@ import { Config } from "../Config";
 import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";
 import { SecretsDataListForProject } from "../secrets/SecretsData";
+import { computeSecretsHash } from "../secrets/SecretsHash";
 import { ProjectsDataGet } from "../projects/ProjectsData";
 import {
   computeSecretsDiff,
@@ -13,7 +14,7 @@ import {
 import { latestSnapshot, ResticClient, ResticSnapshot } from "./ResticClient";
 import { ResticSyncError } from "./ResticErrors";
 import { resticTimeoutsFromConfig } from "./ResticTimeouts";
-import { SyncLocksRun } from "./SyncLocks";
+import { SyncQueueRun } from "./SyncLocks";
 import { readSnapshotSecrets } from "./SyncService";
 import {
   createTemporaryWorkDir,
@@ -32,6 +33,12 @@ export interface SyncPreviewResult extends SecretsDiffResult {
   /** Snapshot whose content would be applied. */
   snapshotId: string;
   snapshotTime: string;
+  /**
+   * SHA-256 of the current project secrets when the preview was computed.
+   * The confirmation must echo it: the write section rejects a mismatch
+   * with 409 so an edit made since the preview is never silently lost.
+   */
+  contentHash: string;
 }
 
 export interface SyncPreviewDataLayer {
@@ -64,11 +71,10 @@ export async function ResticSyncPreviewPull(
   dataApi: SyncPreviewDataLayer = SyncPreviewDataApi,
   signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
-  return SyncLocksRun(
+  return SyncQueueRun(
     project.id,
     () =>
       resticSyncPreviewPullUnlocked(context, config, project, dataApi, signal),
-    context,
   );
 }
 
@@ -117,7 +123,7 @@ export async function ResticSyncPreviewRestoreSnapshot(
   dataApi: SyncPreviewDataLayer = SyncPreviewDataApi,
   signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
-  return SyncLocksRun(
+  return SyncQueueRun(
     project.id,
     () =>
       resticSyncPreviewRestoreSnapshotUnlocked(
@@ -128,7 +134,6 @@ export async function ResticSyncPreviewRestoreSnapshot(
         dataApi,
         signal,
       ),
-    context,
   );
 }
 
@@ -180,7 +185,7 @@ export async function ResticSyncPreviewDiscardLocalChanges(
   dataApi: SyncPreviewDataLayer = SyncPreviewDataApi,
   signal?: AbortSignal,
 ): Promise<SyncPreviewResult> {
-  return SyncLocksRun(
+  return SyncQueueRun(
     project.id,
     () =>
       resticSyncPreviewDiscardLocalChangesUnlocked(
@@ -190,7 +195,6 @@ export async function ResticSyncPreviewDiscardLocalChanges(
         dataApi,
         signal,
       ),
-    context,
   );
 }
 
@@ -267,6 +271,7 @@ async function previewSnapshotContent(
       ...computeSecretsDiff(current, incoming),
       snapshotId: target.id,
       snapshotTime: target.time,
+      contentHash: computeSecretsHash(current),
     };
   } finally {
     await fse.remove(workDir);

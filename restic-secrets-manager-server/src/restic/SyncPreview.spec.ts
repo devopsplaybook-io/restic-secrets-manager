@@ -5,6 +5,7 @@ import { Project } from "../model/Project";
 import { Secret } from "../model/Secret";
 import { Config } from "../Config";
 import type { Span } from "@opentelemetry/sdk-trace";
+import { computeSecretsHash } from "../secrets/SecretsHash";
 import {
   ResticSyncPreviewDiscardLocalChanges,
   ResticSyncPreviewPull,
@@ -95,7 +96,8 @@ describe("ResticSyncPreviewPull", () => {
         { id: "snapshot-1", time: "2026-01-01T10:00:00Z" },
       ]),
     });
-    const dataApi = dataApiStub([makeSecret("api", { K1: "old" })]);
+    const current = [makeSecret("api", { K1: "old" })];
+    const dataApi = dataApiStub(current);
 
     const preview = await ResticSyncPreviewPull(
       span(),
@@ -112,6 +114,9 @@ describe("ResticSyncPreviewPull", () => {
     );
     expect(preview.snapshotId).toBe("snapshot-1");
     expect(preview.snapshotTime).toBe("2026-01-01T10:00:00Z");
+    // The preview pins the current content so a stale confirmation is
+    // rejected by the server.
+    expect(preview.contentHash).toBe(computeSecretsHash(current));
     expect(preview.summary.secretsChanged).toBe(1);
     expect(preview.secrets).toEqual([
       {
@@ -342,8 +347,12 @@ describe("ResticSyncPreviewDiscardLocalChanges", () => {
 describe("preview serialization", () => {
   it("should serialize concurrent previews per project", async () => {
     let releaseFirst!: () => void;
+    let signalEntered!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
     });
     const client = mockClient({
       snapshots: jest.fn().mockResolvedValue([
@@ -352,6 +361,7 @@ describe("preview serialization", () => {
       restore: jest
         .fn()
         .mockImplementationOnce(async (_id: string, target: string) => {
+          signalEntered();
           await gate;
           await fse.writeJson(path.join(target, "api.json"), { K1: "v1" });
         })
@@ -370,7 +380,7 @@ describe("preview serialization", () => {
       project,
       dataApi,
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await entered;
     expect(client.restore).toHaveBeenCalledTimes(1);
 
     releaseFirst();

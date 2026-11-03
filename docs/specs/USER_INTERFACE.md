@@ -38,6 +38,7 @@
 - [x] The Pull action opens a preview of the changes the pull would apply (values masked) and only executes after confirmation
 - [x] The preview displays the exact snapshot that will be applied (short id and time) for pull, discard and snapshot restore; the pull confirmation sends that pinned snapshot id
 - [x] When the repository changed between the preview and the confirmation, the pull answers HTTP `409` and the preview dialog shows an inline "repository changed, preview again" error; the confirmation stays disabled until a preview with a pinned snapshot is available
+- [x] Pull, discard and snapshot restore confirmations echo the previewed secrets `contentHash`. When the secrets changed in the meantime the server answers 409 `SYNC_PREVIEW_STALE`: the dialog shows the server message, reloads the preview and asks to review and confirm again (only offering that refresh note when the reload succeeded)
 - [x] After the projects load, the UI checks each project for remote changes to pull and shows a badge when the repository holds a more recent snapshot (checking state shown while in progress, degraded to "check failed" on error)
 - [x] A History button per project card opens the snapshot history
 
@@ -58,6 +59,7 @@
 - [x] Each timeline entry shows who pushed the snapshot: the `pushed-by` attribution, falling back to the user and host reported by restic, or "unknown pusher" for older snapshots
 - [x] Each timeline entry offers a Restore action, confirmed before the snapshot replaces the project secrets
 - [x] The restore confirmation shows a preview of the changes the restore would apply (values masked) and only executes after confirmation
+- [x] When the secrets changed between the restore preview and the confirmation (409 `SYNC_PREVIEW_STALE`), the history dialog shows the server message, reloads the restore preview for that snapshot and asks to review and confirm again
 - [x] The result of a restore is displayed in the history dialog and the project cards are refreshed
 
 ## Project detail (secrets)
@@ -83,4 +85,4 @@
 - [x] Importing .env content rejects invalid environment variable names with the offending line number; JSON import keeps accepting any key
 - [x] "Copy as .env" uses the server export (canonical escaping and key validation): invalid keys surface the server explanation, and "Copy as JSON" remains available
 
-Last spec review: 2026-10-23
+Last spec review: 2026-11-03
