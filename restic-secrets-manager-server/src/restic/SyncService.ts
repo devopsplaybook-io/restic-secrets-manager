@@ -18,6 +18,7 @@ import {
   SecretsDataReplaceForProject,
 } from "../secrets/SecretsData";
 import {
+  compareSnapshots,
   isRepoNotInitialized,
   latestSnapshot,
   ResticClient,
@@ -25,7 +26,7 @@ import {
 } from "./ResticClient";
 import { ResticSyncError } from "./ResticErrors";
 import { resticTimeoutsFromConfig } from "./ResticTimeouts";
-import { SyncLocksRun } from "./SyncLocks";
+import { ProjectWriteLocksRun, SyncQueueRun } from "./SyncLocks";
 import {
   createTemporaryWorkDir,
   ensurePrivateDir,
@@ -81,32 +82,45 @@ export interface ConnectionTestResult {
 
 export { ResticSyncError };
 
+/** Error code returned when the previewed secrets changed before confirming. */
+export const SYNC_PREVIEW_STALE_CODE = "SYNC_PREVIEW_STALE";
+export const SYNC_PREVIEW_STALE_MESSAGE =
+  "Project secrets changed since the preview. Preview again and confirm the new changes.";
+
+/** Delays between the read-after-write attempts on a freshly created snapshot. */
+export const CREATED_SNAPSHOT_RETRY_DELAYS_MS = [250, 500];
+
+type SleepFn = (ms: number) => Promise<void>;
+const defaultSleep: SleepFn = (ms) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Pull (restore) the pinned snapshot of the project repository and replace
  * the project secrets with its content. The snapshot must still be the
  * repository latest (otherwise the repository changed since the preview and
- * the pull is rejected with 409). Serialized per project.
+ * the pull is rejected with 409). Rejected with 409 as well when the
+ * project secrets moved since the preview content hash was taken.
+ * Serialized per project.
  */
 export async function ResticSyncPull(
   context: Span,
   config: Config,
   project: Project,
   snapshotId: string,
+  expectedContentHash?: string,
   dataApi: any = DataApi,
   signal?: AbortSignal,
 ): Promise<PullResult> {
-  return SyncLocksRun(
-    project.id,
-    () =>
-      resticSyncPullUnlocked(
-        context,
-        config,
-        project,
-        snapshotId,
-        dataApi,
-        signal,
-      ),
-    context,
+  return SyncQueueRun(project.id, () =>
+    resticSyncPullUnlocked(
+      context,
+      config,
+      project,
+      snapshotId,
+      expectedContentHash,
+      dataApi,
+      signal,
+    ),
   );
 }
 
@@ -115,6 +129,7 @@ async function resticSyncPullUnlocked(
   config: Config,
   project: Project,
   snapshotId: string,
+  expectedContentHash: string | undefined,
   dataApi: any,
   signal?: AbortSignal,
 ): Promise<PullResult> {
@@ -124,7 +139,7 @@ async function resticSyncPullUnlocked(
       400,
     );
   }
-  // Re-read the project under the lock: a queued sync may have moved the
+  // Re-read the project under the queue: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(
@@ -132,6 +147,12 @@ async function resticSyncPullUnlocked(
     undefined,
     resticTimeoutsFromConfig(config),
     signal,
+  );
+  const expected = await resolveExpectedContentHash(
+    context,
+    project,
+    expectedContentHash,
+    dataApi,
   );
   const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
@@ -156,20 +177,24 @@ async function resticSyncPullUnlocked(
     // Restore exactly the previewed snapshot, not "latest" resolved again.
     await client.restore(snapshotId, restoreDir);
     await restrictTreePermissions(restoreDir);
-    const { secrets, keys } = await importPulledSecrets(
+    const secrets = await readSnapshotSecretsForProject(project, restoreDir);
+
+    // The restic I/O runs outside the write lock: the compare-and-swap and
+    // the replacement are the only part that must be serialized.
+    await applySnapshotSecrets(
       context,
-      project,
-      restoreDir,
+      project.id,
+      expected,
+      secrets,
+      { snapshotId: latest.id, snapshotTime: latest.time },
       dataApi,
     );
-
-    await recordSyncState(context, project, dataApi, latest.id, latest.time);
 
     return {
       snapshotId: latest.id,
       snapshotTime: latest.time,
-      secrets,
-      keys,
+      secrets: secrets.length,
+      keys: countSecretKeys(secrets),
     };
   } finally {
     await fse.remove(workDir);
@@ -177,25 +202,82 @@ async function resticSyncPullUnlocked(
 }
 
 /**
- * Read all JSON secret files from a restored folder and replace the
- * project secrets in the database with them.
+ * Capture the compare-and-swap token: the hash sent by the preview when
+ * provided, otherwise the hash of the current secrets captured now (older
+ * clients that do not send the token keep working with a best-effort
+ * check).
  */
-export async function importPulledSecrets(
+async function resolveExpectedContentHash(
   context: Span,
   project: Project,
+  expectedContentHash: string | undefined,
+  dataApi: any,
+): Promise<string> {
+  if (typeof expectedContentHash === "string") {
+    return expectedContentHash;
+  }
+  const secrets = await dataApi.SecretsDataListForProject(context, project.id);
+  return computeSecretsHash(secrets);
+}
+
+/**
+ * Read the restored snapshot content and attach it to the project.
+ * Invalid content is rejected by `readSnapshotSecrets` with 422.
+ */
+async function readSnapshotSecretsForProject(
+  project: Project,
   dir: string,
-  dataApi: any = DataApi,
-): Promise<{ secrets: number; keys: number }> {
+): Promise<Secret[]> {
   const secrets = await readSnapshotSecrets(dir);
   for (const secret of secrets) {
     secret.projectId = project.id;
   }
-  const keys = secrets.reduce(
-    (sum, secret) => sum + Object.keys(secret.data).length,
-    0,
+  return secrets;
+}
+
+function countSecretKeys(secrets: Secret[]): number {
+  return secrets.reduce((sum, secret) => sum + Object.keys(secret.data).length, 0);
+}
+
+/**
+ * Compare-and-swap of the project secrets: reject with 409 when the
+ * secrets changed since the preview, otherwise replace them and record
+ * the synchronization state in the same transaction.
+ */
+async function applySnapshotSecrets(
+  context: Span,
+  projectId: string,
+  expectedContentHash: string,
+  secrets: Secret[],
+  snapshot: { snapshotId: string; snapshotTime: string },
+  dataApi: any,
+): Promise<void> {
+  await ProjectWriteLocksRun(
+    projectId,
+    async () => {
+      const project = await dataApi.ProjectsDataGet(context, projectId);
+      if (!project) {
+        throw new ResticSyncError(`Project not found: ${projectId}`, 404);
+      }
+      const current = await dataApi.SecretsDataListForProject(
+        context,
+        projectId,
+      );
+      if (computeSecretsHash(current) !== expectedContentHash) {
+        throw new ResticSyncError(
+          SYNC_PREVIEW_STALE_MESSAGE,
+          409,
+          SYNC_PREVIEW_STALE_CODE,
+        );
+      }
+      await dataApi.SecretsDataReplaceForProject(context, projectId, secrets, {
+        snapshotId: snapshot.snapshotId,
+        snapshotTime: snapshot.snapshotTime,
+        contentHash: computeSecretsHash(secrets),
+      });
+    },
+    context,
   );
-  await dataApi.SecretsDataReplaceForProject(context, project.id, secrets);
-  return { secrets: secrets.length, keys };
 }
 
 /**
@@ -257,18 +339,15 @@ export async function ResticSyncPush(
   dataApi: any = DataApi,
   signal?: AbortSignal,
 ): Promise<PushResult> {
-  return SyncLocksRun(
-    project.id,
-    () =>
-      resticSyncPushUnlocked(
-        context,
-        config,
-        project,
-        pushedBy,
-        dataApi,
-        signal,
-      ),
-    context,
+  return SyncQueueRun(project.id, () =>
+    resticSyncPushUnlocked(
+      context,
+      config,
+      project,
+      pushedBy,
+      dataApi,
+      signal,
+    ),
   );
 }
 
@@ -280,9 +359,10 @@ async function resticSyncPushUnlocked(
   dataApi: any,
   signal?: AbortSignal,
 ): Promise<PushResult> {
-  // Re-read the project under the lock: a queued sync may have moved the
+  // Re-read the project under the queue: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
+  const observedLastSyncSnapshotId = project.lastSyncSnapshotId;
   const client = new ResticClient(
     project,
     undefined,
@@ -298,6 +378,7 @@ async function resticSyncPushUnlocked(
       context,
       project.id,
     );
+    const pushedHash = computeSecretsHash(secrets);
     for (const secret of secrets) {
       const filePath = path.join(secretsDir, `${secret.name}.json`);
       await writePrivateJson(filePath, secret.data);
@@ -327,12 +408,40 @@ async function resticSyncPushUnlocked(
       knownIds,
     );
 
-    await dataApi.ProjectsDataUpdateSyncState(
-      context,
+    // Finalize under the write lock: a concurrent edit must not be
+    // recorded as synchronized by this push.
+    await ProjectWriteLocksRun(
       project.id,
-      created.id,
-      created.time,
-      computeSecretsHash(secrets),
+      async () => {
+        const fresh = await dataApi.ProjectsDataGet(context, project.id);
+        if (!fresh) {
+          throw new ResticSyncError(
+            `Project not found: ${project.id}`,
+            404,
+          );
+        }
+        if (fresh.lastSyncSnapshotId !== observedLastSyncSnapshotId) {
+          throw new ResticSyncError(
+            "Another synchronization completed while pushing. Pull and push again.",
+            409,
+          );
+        }
+        // The hash of what was pushed is the baseline; the hash of the
+        // current secrets tells whether edits arrived during the push.
+        const freshSecrets = await dataApi.SecretsDataListForProject(
+          context,
+          project.id,
+        );
+        await dataApi.ProjectsDataUpdateSyncState(
+          context,
+          project.id,
+          created.id,
+          created.time,
+          pushedHash,
+          computeSecretsHash(freshSecrets),
+        );
+      },
+      context,
     );
 
     return {
@@ -347,18 +456,39 @@ async function resticSyncPushUnlocked(
 /**
  * Identify the snapshot created by a backup: the summary id from
  * `restic backup --json` when present, otherwise the single snapshot that
- * appeared since the pre-push listing. Never falls back to "the latest
+ * appeared since the pre-push listing. The metadata read right after the
+ * backup may lag behind (eventual consistency): retry with a short backoff
+ * before falling back to the listing. Never falls back to "the latest
  * snapshot", which may belong to another writer.
  */
-async function resolveCreatedSnapshot(
+export async function resolveCreatedSnapshot(
   client: ResticClient,
   createdId: string | null,
   knownIds: Set<string>,
+  sleep: SleepFn = defaultSleep,
 ): Promise<ResticSnapshot> {
   if (createdId) {
-    const created = await client.snapshot(createdId);
-    if (created) {
-      return created;
+    for (const delay of [0, ...CREATED_SNAPSHOT_RETRY_DELAYS_MS]) {
+      if (delay > 0) {
+        await sleep(delay);
+      }
+      const created = await client.snapshot(createdId);
+      if (created) {
+        return created;
+      }
+    }
+    // Propagated to the listing fallback below: the id may not be
+    // readable yet while the listing already contains it.
+    const snapshotsAfter = await client.snapshots();
+    const exact = snapshotsAfter.find((snapshot) => snapshot.id === createdId);
+    if (exact) {
+      return exact;
+    }
+    const newSnapshots = snapshotsAfter.filter(
+      (snapshot) => !knownIds.has(snapshot.id),
+    );
+    if (newSnapshots.length === 1) {
+      return newSnapshots[0];
     }
   } else {
     const snapshotsAfter = await client.snapshots();
@@ -422,7 +552,7 @@ export async function ResticSyncListSnapshots(
   const snapshots = await client.snapshots();
   return snapshots
     .slice()
-    .sort((a, b) => (a.time > b.time ? -1 : a.time < b.time ? 1 : 0))
+    .sort((a, b) => compareSnapshots(b, a))
     .map((snapshot) => ({
       id: snapshot.id,
       time: snapshot.time,
@@ -507,21 +637,20 @@ export async function ResticSyncRestoreSnapshot(
   config: Config,
   project: Project,
   snapshotId: string,
+  expectedContentHash?: string,
   dataApi: any = DataApi,
   signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
-  return SyncLocksRun(
-    project.id,
-    () =>
-      resticSyncRestoreSnapshotUnlocked(
-        context,
-        config,
-        project,
-        snapshotId,
-        dataApi,
-        signal,
-      ),
-    context,
+  return SyncQueueRun(project.id, () =>
+    resticSyncRestoreSnapshotUnlocked(
+      context,
+      config,
+      project,
+      snapshotId,
+      expectedContentHash,
+      dataApi,
+      signal,
+    ),
   );
 }
 
@@ -530,10 +659,11 @@ async function resticSyncRestoreSnapshotUnlocked(
   config: Config,
   project: Project,
   snapshotId: string,
+  expectedContentHash: string | undefined,
   dataApi: any,
   signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
-  // Re-read the project under the lock: a queued sync may have moved the
+  // Re-read the project under the queue: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   const client = new ResticClient(
@@ -541,6 +671,12 @@ async function resticSyncRestoreSnapshotUnlocked(
     undefined,
     resticTimeoutsFromConfig(config),
     signal,
+  );
+  const expected = await resolveExpectedContentHash(
+    context,
+    project,
+    expectedContentHash,
+    dataApi,
   );
   const workDir = await createTemporaryWorkDir(config.TMP_DIR);
   const restoreDir = path.join(workDir, "restore");
@@ -558,20 +694,22 @@ async function resticSyncRestoreSnapshotUnlocked(
 
     await client.restore(target.id, restoreDir);
     await restrictTreePermissions(restoreDir);
-    const { secrets, keys } = await importPulledSecrets(
+    const secrets = await readSnapshotSecretsForProject(project, restoreDir);
+
+    await applySnapshotSecrets(
       context,
-      project,
-      restoreDir,
+      project.id,
+      expected,
+      secrets,
+      { snapshotId: target.id, snapshotTime: target.time },
       dataApi,
     );
-
-    await recordSyncState(context, project, dataApi, target.id, target.time);
 
     return {
       snapshotId: target.id,
       snapshotTime: target.time,
-      secrets,
-      keys,
+      secrets: secrets.length,
+      keys: countSecretKeys(secrets),
     };
   } finally {
     await fse.remove(workDir);
@@ -587,20 +725,19 @@ export async function ResticSyncDiscardLocalChanges(
   context: Span,
   config: Config,
   project: Project,
+  expectedContentHash?: string,
   dataApi: any = DataApi,
   signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
-  return SyncLocksRun(
-    project.id,
-    () =>
-      resticSyncDiscardLocalChangesUnlocked(
-        context,
-        config,
-        project,
-        dataApi,
-        signal,
-      ),
-    context,
+  return SyncQueueRun(project.id, () =>
+    resticSyncDiscardLocalChangesUnlocked(
+      context,
+      config,
+      project,
+      expectedContentHash,
+      dataApi,
+      signal,
+    ),
   );
 }
 
@@ -608,10 +745,11 @@ async function resticSyncDiscardLocalChangesUnlocked(
   context: Span,
   config: Config,
   project: Project,
+  expectedContentHash: string | undefined,
   dataApi: any,
   signal?: AbortSignal,
 ): Promise<RestoreSnapshotResult> {
-  // Re-read the project under the lock: a queued sync may have moved the
+  // Re-read the project under the queue: a queued sync may have moved the
   // last synchronized state while this operation was waiting.
   project = (await dataApi.ProjectsDataGet(context, project.id)) || project;
   if (!project.lastSyncSnapshotId) {
@@ -625,6 +763,7 @@ async function resticSyncDiscardLocalChangesUnlocked(
     config,
     project,
     project.lastSyncSnapshotId,
+    expectedContentHash,
     dataApi,
     signal,
   );
@@ -650,24 +789,6 @@ export function ensureNoNewerSnapshot(
       409,
     );
   }
-}
-
-/** Records the synchronized snapshot and the hash of the stored secrets. */
-async function recordSyncState(
-  context: Span,
-  project: Project,
-  dataApi: any,
-  snapshotId: string,
-  snapshotTime: string,
-): Promise<void> {
-  const secrets = await dataApi.SecretsDataListForProject(context, project.id);
-  await dataApi.ProjectsDataUpdateSyncState(
-    context,
-    project.id,
-    snapshotId,
-    snapshotTime,
-    computeSecretsHash(secrets),
-  );
 }
 
 /** Indirection point over the data layer so tests can stub it. */

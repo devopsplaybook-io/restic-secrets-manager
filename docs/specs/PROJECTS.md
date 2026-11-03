@@ -40,9 +40,11 @@ Each project is defined with the settings required to connect to a restic reposi
 
 ## Synchronization lifecycle
 
-- [x] Pull, push, snapshot restore, discard and their previews are serialized per project: an in-process queue plus a PostgreSQL advisory lock when `DATABASE_TYPE=postgres`; SQLite deployments stay single-replica
+- [x] Pull, push, snapshot restore, discard and their previews are serialized per project: an in-process queue wraps the whole operation, and the short database sections (compare-and-swap, replacement, sync state) take a PostgreSQL advisory lock when `DATABASE_TYPE=postgres`, so independent replicas cannot interleave them; SQLite deployments stay single-replica
 - [x] Every restic invocation of a synchronization (snapshots, restore, backup, init) is bounded by a configurable timeout (`RESTIC_TIMEOUT_*`); on expiry the process is terminated (SIGTERM, then SIGKILL after `RESTIC_KILL_GRACE_MS`) and the API answers HTTP 504
 - [x] A client disconnect aborts the restic process of its request; the project lock and status-cache slots are released on success, error and timeout
+- [x] Snapshot recency is compared as parsed timestamps (epoch milliseconds, so timezone offsets and sub-second precision count), not as strings; an unparsable time sorts as older, and the snapshot id breaks exact ties
+- [x] Project deletion takes the project write lock, so it cannot interleave with a synchronization or a secret write; the deletion and its secret cascade remain one transaction, and a request that lost the race answers 404
 
 ## Visibility
 
@@ -51,4 +53,4 @@ Each project is defined with the settings required to connect to a restic reposi
 - [x] Admin visibility is resolved from the live database role, not from the session token: a demoted admin immediately loses cross-project access
 - [x] Users without access to any project see an empty list
 
-Last spec review: 2026-10-23
+Last spec review: 2026-11-03

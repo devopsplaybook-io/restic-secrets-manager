@@ -70,7 +70,7 @@
 
 <script setup>
 import api from "../utils/api";
-import { pusherLabel } from "../utils/sync-preview";
+import { pusherLabel, shouldRefreshPreview } from "../utils/sync-preview";
 
 const props = defineProps({
   project: { type: Object, required: true },
@@ -145,12 +145,21 @@ async function restoreSnapshot(snapshot) {
   try {
     const res = await api.post(
       `/projects/${props.project.id}/snapshots/${snapshot.id}/restore`,
+      { contentHash: restorePreview.value?.contentHash },
     );
     cancelRestore();
     restoredMessage.value = `Restored snapshot ${shortId(res.data.snapshotId)}: ${res.data.secrets} secret(s) and ${res.data.keys} key(s).`;
     emit("restored");
   } catch (e) {
-    error.value = e.response?.data?.error || "Unable to restore the snapshot";
+    if (shouldRefreshPreview(e)) {
+      // The secrets changed since this preview: refresh it and keep the
+      // confirmation open so the user reviews the new diff before retrying.
+      const message = e.response?.data?.error || "The preview is out of date";
+      await askRestore(snapshot);
+      error.value = `${message} The preview has been refreshed: review it and confirm again.`;
+    } else {
+      error.value = e.response?.data?.error || "Unable to restore the snapshot";
+    }
   } finally {
     restoring.value = false;
   }
