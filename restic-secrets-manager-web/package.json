@@ -12,20 +12,20 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@nuxt/eslint-config": "^1.17.0",
-    "@vite-pwa/nuxt": "^1.1.1",
-    "@vitejs/plugin-vue": "^6.0.10",
-    "@vitest/coverage-v8": "^5.0.5",
+    "@vite-pwa/nuxt": "^2.0.1",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "@vitest/coverage-v8": "^5.1.0",
     "@vue/test-utils": "^2.5.1",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "happy-dom": "^21.0.4",
-    "nuxt": "^4.6.3",
-    "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.5",
-    "vue": "^3.5.44"
+    "nuxt": "^4.6.4",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0",
+    "vue": "^3.5.45"
   },
   "dependencies": {
     "@pinia/nuxt": "^1.0.3",
-    "axios": "^1.21.0",
+    "axios": "^1.21.1",
     "bootstrap-icons": "^1.13.2",
     "jwt-decode": "^4.0.0",
     "pinia": "^4.1.0"

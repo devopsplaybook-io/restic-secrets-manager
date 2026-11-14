@@ -31,7 +31,7 @@ export default defineNuxtConfig({
   },
   pwa: {
     registerType: "autoUpdate",
-    workbox: {
+    generateSW: {
       globPatterns: ["images/*.{png,svg}"],
       navigateFallback: undefined,
       skipWaiting: true,
