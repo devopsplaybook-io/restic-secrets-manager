@@ -9,6 +9,34 @@ describe("Config", () => {
     expect(config.JWT_VALIDITY_DURATION).toBe(3600);
   });
 
+  it("should keep 1-hour sessions after a config reload", async () => {
+    const tmpDir = fse.mkdtempSync(path.join(os.tmpdir(), "rsm-session-"));
+    const previousConfigFile = process.env.CONFIG_FILE;
+    const previousValidity = process.env.JWT_VALIDITY_DURATION;
+    delete process.env.JWT_VALIDITY_DURATION;
+    process.env.CONFIG_FILE = path.join(tmpDir, "config.json");
+    try {
+      fse.writeJsonSync(process.env.CONFIG_FILE, {});
+      const config = new Config();
+      await config.reload();
+      // Literal effective value from the session policy doc (documented
+      // exception: a deliberately short, non-renewed session).
+      expect(config.JWT_VALIDITY_DURATION).toBe(3600);
+    } finally {
+      if (previousConfigFile === undefined) {
+        delete process.env.CONFIG_FILE;
+      } else {
+        process.env.CONFIG_FILE = previousConfigFile;
+      }
+      if (previousValidity === undefined) {
+        delete process.env.JWT_VALIDITY_DURATION;
+      } else {
+        process.env.JWT_VALIDITY_DURATION = previousValidity;
+      }
+      fse.removeSync(tmpDir);
+    }
+  });
+
   it("should default TMP_DIR to /tmp", () => {
     const config = new Config();
     expect(config.TMP_DIR).toBe("/tmp");
