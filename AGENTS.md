@@ -73,7 +73,7 @@ restic-secrets-manager/
 - **Linting**: oxlint
 - **Config**: Loaded from `config.json`, overridable via environment variables (`ConfigBase`); the file watcher reloads it in place and applies the restic timeouts and kill grace, `SYNC_STATUS_*`, `TMP_DIR` (for operations started after the reload) and the notification settings without a restart — all other settings need a restart
 - **Version**: `VERSION` is the root `package.json` version (`ResolveAppVersion` in `src/Config.ts`), resolved in both the dev (`../..`) and container (`..`, next to `dist`) layouts; `VERSION` env/config still overrides it
-- **Sessions**: JWT validity is 1 hour by default and sessions are never auto-renewed
+- **Sessions**: JWT validity is 1 hour by default and sessions are never auto-renewed. This is a documented exception in the [session policy](https://github.com/devopsplaybook-io/common-utils/blob/main/docs/auth-session-policy.md) (`3600`, fewer than the 1-hour sliding default for user-facing apps, no renewal, cap field unused); `Config.spec.ts` asserts the literal `3600` after `reload()`
 - **Secrets handling**: restic credentials are per-project settings; never log sensitive values
 
 ### Web (`restic-secrets-manager-web/`)

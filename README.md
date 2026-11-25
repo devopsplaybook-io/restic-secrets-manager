@@ -142,7 +142,7 @@ The successful reload is logged as `Configuration reloaded: ...`. All other sett
 | -------------------------------------- | ------------------------ | --------------------------------------------------- |
 | `API_PORT`                             | `8080`                   | Server (API + web) port                             |
 | `JWT_KEY`                              | database-managed         | JWT signing key — when set, it takes precedence over the key stored in the database; changing it invalidates issued sessions |
-| `JWT_VALIDITY_DURATION`                | `3600`                   | Session duration in seconds (1 hour, not renewed)   |
+| `JWT_VALIDITY_DURATION`                | `3600`                   | Session duration in seconds (1 hour, not renewed; documented exception in the [session policy](https://github.com/devopsplaybook-io/common-utils/blob/main/docs/auth-session-policy.md)) |
 | `JWT_REVOCATION_ENABLED`               | `true`                   | Invalidate sessions on role, scope or password changes and user deletion |
 | `AUTH_RATE_LIMIT_LOGIN_MAX`            | `10`                     | Login attempts allowed per window (per IP and username; `0` disables) |
 | `AUTH_RATE_LIMIT_REFRESH_MAX`          | `60`                     | Session refresh requests allowed per window (per IP; `0` disables) |
