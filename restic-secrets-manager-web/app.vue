@@ -7,6 +7,7 @@
     <main>
       <NuxtPage />
     </main>
+    <AppUpdatePrompt />
   </div>
 </template>
 
