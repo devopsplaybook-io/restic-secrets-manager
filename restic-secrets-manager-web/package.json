@@ -24,6 +24,7 @@
     "vue": "^3.5.45"
   },
   "dependencies": {
+    "@devopsplaybook.io/common-web": "^0.16.0",
     "@pinia/nuxt": "^1.0.3",
     "axios": "^1.21.1",
     "bootstrap-icons": "^1.13.2",

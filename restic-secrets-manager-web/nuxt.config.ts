@@ -1,4 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import { fileURLToPath } from "node:url";
+
 export default defineNuxtConfig({
   ssr: false,
   experimental: {
@@ -23,6 +25,24 @@ export default defineNuxtConfig({
     "~/assets/css/main.css",
   ],
   modules: ["@pinia/nuxt", "@vite-pwa/nuxt"],
+  // common-web is consumed as raw .vue/.ts sources (not as a Nuxt layer, so its
+  // global CSS does not leak here). Map the package to its installed directory
+  // so both Vite and the generated tsconfig resolve the raw subpath imports.
+  alias: {
+    "@devopsplaybook.io/common-web": fileURLToPath(
+      new URL("./node_modules/@devopsplaybook.io/common-web", import.meta.url),
+    ),
+  },
+  // Raw sources must go through Vite's transform pipeline and stay out of
+  // pre-bundling.
+  build: {
+    transpile: ["@devopsplaybook.io/common-web"],
+  },
+  vite: {
+    optimizeDeps: {
+      exclude: ["@devopsplaybook.io/common-web"],
+    },
+  },
   imports: {
     dirs: ["./stores"],
   },
@@ -30,12 +50,15 @@ export default defineNuxtConfig({
     autoImports: ["defineStore", "acceptHMRUpdate"],
   },
   pwa: {
-    registerType: "autoUpdate",
+    // Prompt mode keeps the old worker controlling until the user accepts the
+    // shared update banner (components/AppUpdatePrompt.vue): a new build must
+    // never silently reload a tab while secrets are being entered.
+    registerType: "prompt",
+    // Keep the sw.js fetch off the HTTP cache so a new build is noticed.
+    updateViaCache: "none",
     generateSW: {
       globPatterns: ["images/*.{png,svg}"],
       navigateFallback: undefined,
-      skipWaiting: true,
-      clientsClaim: true,
     },
     manifest: {
       name: "Restic Secrets Manager",
