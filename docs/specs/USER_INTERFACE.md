@@ -3,13 +3,15 @@
 ## Layout
 
 - [x] Single-page application (Nuxt SPA, SSR disabled), installable as a PWA
-- [x] Top navigation bar with the application name, links (Projects, API Tokens when authenticated, Users for admins), theme toggle and logout
-- [x] Only the current settings link is highlighted: `/settings/tokens` and `/settings/users` are compared by exact path, so a settings sub-page never highlights both entries
+- [x] Top navigation bar with the application name, links (Projects, API Tokens and Account when authenticated, Users for admins), theme toggle and logout
+- [x] Only the current settings link is highlighted: `/settings/tokens`, `/settings/account` and `/settings/users` are compared by exact path, so a settings sub-page never highlights both entries
 - [x] Dark and light themes, persisted in localStorage with OS preference fallback
 
 ## Pages
 
 - [x] **Login**: sign-in form; first-run detection shows a create-admin-account form
+- [x] **Login with a code**: next to the sign-in form, a card shows an 8-character code to enter on a device that is already signed in; hidden during first-run setup and whenever the capability is unavailable (feature disabled)
+- [x] **Account** (`/settings/account`, any authenticated user): "Log in on another device" card to enter a code, preview the requesting device and approve the sign-in; the password field is required when the capability reports password step-up
 - [x] **Projects** (`/`): grid of project cards showing name, repository target, secret count, last synchronization info and Pull/Push/History actions; admins can create and delete projects
 - [x] **Project detail** (`/projects/:id`): list of secrets, secret editor dialog (key/value rows), read-only project settings (sensitive values masked)
 - [x] **Users** (`/settings/users`, admin only): user table with role and per-project access; create/edit/delete users
@@ -30,6 +32,9 @@
 - [x] All dialogs are modal native `<dialog>` elements (showModal): centered with dimmed backdrop; Esc, backdrop click and Cancel/Close buttons dismiss them
 - [x] All dialogs show a visible close (×) icon button in their header
 - [x] Dialog and card titles with long names (e.g. "Edit Secret: <name>") wrap instead of overflowing the dialog/card layout
+- [x] Approving a sign-in with a code requires the account password; a wrong or missing password keeps the preview open with an inline error. The approving user sees the requesting device before approving
+- [x] After approval the new device receives a normal session and returns to the page it came from; the code is single-use
+- [x] The login-with-a-code and account cards are hidden when the feature is disabled or unavailable, and both follow the light and dark themes
 
 ## Home page (Projects)
 
@@ -89,4 +94,4 @@
 - [x] Importing .env content rejects invalid environment variable names with the offending line number; JSON import keeps accepting any key
 - [x] "Copy as .env" uses the server export (canonical escaping and key validation): invalid keys surface the server explanation, and "Copy as JSON" remains available
 
-Last spec review: 2026-11-03
+Last spec review: 2026-11-26

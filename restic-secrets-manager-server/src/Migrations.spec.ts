@@ -67,7 +67,7 @@ beforeAll(() => {
 });
 
 describe("database migrations", () => {
-  it("should apply every migration up to init-0011 on SQLite", async () => {
+  it("should apply every migration up to init-0012 on SQLite", async () => {
     await inTempDataDir(async (dataDir) => {
       await SqlDbUtilsInit(
         fakeSpan(),
@@ -77,7 +77,32 @@ describe("database migrations", () => {
       const db = SqlDbUtilsGetDatabase();
       expect(tableColumns(db, "users")).toContain("tokenVersion");
       expect(tableColumns(db, "secrets")).toContain("version");
-      expect(dbVersion(db)).toBe(11);
+      expect(tableColumns(db, "users_login_codes")).toEqual(
+        expect.arrayContaining([
+          "id",
+          "requestTokenHash",
+          "codeHash",
+          "approvedByUserId",
+          "attempts",
+        ]),
+      );
+      const indexes = db
+        .prepare("PRAGMA index_list(users_login_codes)")
+        .all() as any[];
+      expect(
+        indexes.some(
+          (index) =>
+            index.name === "users_login_codes_code_hash" && index.unique === 1,
+        ),
+      ).toBe(true);
+      expect(
+        indexes.some(
+          (index) =>
+            index.name === "users_login_codes_status_expires" &&
+            index.unique === 0,
+        ),
+      ).toBe(true);
+      expect(dbVersion(db)).toBe(12);
     });
   });
 
@@ -204,6 +229,24 @@ describe("database migrations", () => {
     for (const sql of [sqliteSql, postgresSql]) {
       expect(sql).toContain("DELETE FROM secrets");
       expect(sql).toMatch(/FOREIGN KEY .*REFERENCES projects.*ON DELETE CASCADE/s);
+    }
+  });
+
+  it("should ship the login-code table on both database types", async () => {
+    const sqliteSql = await fse.readFile(
+      path.join(SQL_DIR, "sqlite/init-0012.sql"),
+      "utf-8",
+    );
+    const postgresSql = await fse.readFile(
+      path.join(SQL_DIR, "postgres/init-0012.sql"),
+      "utf-8",
+    );
+    for (const sql of [sqliteSql, postgresSql]) {
+      expect(sql).toContain(
+        'CREATE TABLE IF NOT EXISTS "users_login_codes"',
+      );
+      expect(sql).toContain('"users_login_codes_code_hash"');
+      expect(sql).toContain('"users_login_codes_status_expires"');
     }
   });
 });

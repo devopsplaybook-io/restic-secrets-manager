@@ -23,6 +23,14 @@
           <span class="nav-label">API Tokens</span></NuxtLink
         >
       </li>
+      <li v-if="authStore.isAuthenticated">
+        <NuxtLink
+          to="/settings/account"
+          :class="activeRoute == '/settings/account' ? 'active' : 'inactive'"
+          ><i class="bi bi-person-circle"/>
+          <span class="nav-label">Account</span></NuxtLink
+        >
+      </li>
       <li v-if="authStore.isAdmin">
         <NuxtLink
           to="/settings/users"

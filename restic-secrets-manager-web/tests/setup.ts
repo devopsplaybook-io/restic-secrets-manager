@@ -30,7 +30,9 @@ export const authState = {
   pendingDraft: null as unknown,
   init: vi.fn(),
   logout: vi.fn(),
+  login: vi.fn(),
   clearPendingDraft: vi.fn(),
+  setSession: vi.fn(),
 };
 
 Object.assign(globalThis, {

@@ -158,6 +158,58 @@ describe("useAuthStore.login / logout", () => {
   });
 });
 
+describe("useAuthStore.setSession", () => {
+  it("should persist and normalize a redeemed session", () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const token = makeToken({ ...validPayload(), exp });
+    const store = useAuthStore();
+
+    store.setSession(token, { name: "alice", role: "admin" });
+
+    expect(store.isAuthenticated).toBe(true);
+    expect(store.user).toEqual({
+      userId: "user-1",
+      name: "alice",
+      role: "admin",
+      scopes: ["project:p1"],
+    });
+    expect(store.expiresAt).toBe(exp * 1000);
+    expect(localStorage.getItem("token")).toBe(token);
+  });
+
+  it("should keep a same-user draft for the restore offer", () => {
+    const draft = sampleDraft("user-1");
+    saveSecretDraft(draft);
+    const store = useAuthStore();
+
+    store.setSession(makeToken(validPayload()), { name: "alice" });
+
+    expect(store.pendingDraft).toEqual(draft);
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should drop a draft captured for another user", () => {
+    saveSecretDraft(sampleDraft("user-2"));
+    const store = useAuthStore();
+
+    store.setSession(makeToken(validPayload()), { name: "alice" });
+
+    expect(store.pendingDraft).toBeNull();
+    expect(sessionStorage.getItem("secretDraft")).toBeNull();
+  });
+
+  it("should logout when the redeemed token is malformed", () => {
+    const store = useAuthStore();
+
+    store.setSession("not-a-jwt", { name: "alice" });
+
+    expect(store.isAuthenticated).toBe(false);
+    expect(store.user).toBeNull();
+    expect(localStorage.getItem("token")).toBeNull();
+    expect(localStorage.getItem("user")).toBeNull();
+  });
+});
+
 describe("useAuthStore draft lifecycle", () => {
   it("should move a same-user draft to memory and clear the storage on login", async () => {
     const draft = sampleDraft("user-1");

@@ -18,6 +18,7 @@ Secrets are edited through a user-friendly interface as flat key/value pairs (ne
 - **Snapshot history** — the home page shows the timeline of the repository snapshots with the pushing user of each snapshot; any snapshot can be restored as the project secrets (with a preview before confirmation), and local changes that were not pushed can be discarded by restoring the last synchronized snapshot (also previewed).
 - **Users and access control** — users authenticate with username/password (JWT). Access is granted per project: regular users see only the projects they are granted access to (none by default), admins see and manage everything.
 - **API tokens** — personal tokens created in the web UI (Settings → API Tokens) let scripts and CI jobs call the API with the same permissions as their user, without the web UI. The token value is shown exactly once at creation; only its hash is stored.
+- **Login with a code** — approve a sign-in started on another device from Settings → Account with an 8-character, single-use code plus the account password (password step-up); the new device receives a normal session for that user. Disabled by default (`LOGIN_CODE_ENABLED`), and API tokens can never approve a sign-in.
 - **Sync notifications** — optional notifications to the ecosystem notifications server on sync events (push, pull, snapshot restore, discard, push conflict); disabled by default and fail-safe.
 - **Short-lived sessions** — sessions last one hour and are never renewed: the UI warns shortly before the session ends and preserves unsaved edits across the expiry, so users can simply log in again (and resume where they left off).
 - **PWA** — installable single-page application with dark/light theme.
@@ -136,7 +137,7 @@ Configuration is provided by environment variables (a `config.json` file next to
 - `SYNC_STATUS_CACHE_TTL_MS`, `SYNC_STATUS_REQUEST_DEADLINE_MS` and `SYNC_STATUS_MAX_WAITERS`, applied to the next status requests;
 - `TMP_DIR`, for restic operations started after the reload (an operation already running keeps its working directory).
 
-The successful reload is logged as `Configuration reloaded: ...`. All other settings are only guaranteed to be applied at startup: `API_PORT`, `TRUST_PROXY`, `CORS_POLICY_ORIGIN`, `DATA_DIR`, `DATABASE_*`, the JWT/auth settings and the OpenTelemetry exporters — restart the server after changing them. Environment variables are only re-read when a file change triggers a reload; prefer a restart after changing them. Each replica watches its own file, so a ConfigMap-based `config.json` update reaches the replicas independently.
+The successful reload is logged as `Configuration reloaded: ...`. All other settings are only guaranteed to be applied at startup: `API_PORT`, `TRUST_PROXY`, `CORS_POLICY_ORIGIN`, `DATA_DIR`, `DATABASE_*`, the JWT/auth settings, `LOGIN_CODE_*` (read when the routes are registered) and the OpenTelemetry exporters — restart the server after changing them. Environment variables are only re-read when a file change triggers a reload; prefer a restart after changing them. Each replica watches its own file, so a ConfigMap-based `config.json` update reaches the replicas independently.
 
 | Variable                               | Default                  | Description                                         |
 | -------------------------------------- | ------------------------ | --------------------------------------------------- |
@@ -147,6 +148,8 @@ The successful reload is logged as `Configuration reloaded: ...`. All other sett
 | `AUTH_RATE_LIMIT_LOGIN_MAX`            | `10`                     | Login attempts allowed per window (per IP and username; `0` disables) |
 | `AUTH_RATE_LIMIT_REFRESH_MAX`          | `60`                     | Session refresh requests allowed per window (per IP; `0` disables) |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS`       | `60`                     | Rate-limit window in seconds                        |
+| `LOGIN_CODE_ENABLED`                   | `false`                  | Enable cross-device login with a code (routes and UI); applied at startup |
+| `LOGIN_CODE_APPROVE_REQUIRE_PASSWORD`  | `false`                  | Require the account password to approve a sign-in (strongly recommended when enabled); applied at startup |
 | `TRUST_PROXY`                          | `false`                  | Trust `X-Forwarded-For` from a reverse proxy (needed for correct client IPs behind a proxy). Enable it only when the proxy overwrites client-supplied `X-Forwarded-For` and is the only path to the application; the shipped Kubernetes base keeps it `false` and the opt-in Ingress overlay sets it to `true` |
 | `CORS_POLICY_ORIGIN`                   |                          | CORS allowed origin                                 |
 | `DATA_DIR`                             | `/data`                  | Data directory (SQLite database)                    |
@@ -206,6 +209,7 @@ Deployment examples with real deployment files are available in [docs/deployment
 
 - Restic repository credentials and the repository password are stored in the application database and are never returned by the API nor displayed in the UI.
 - API tokens are stored as SHA-256 hashes only; the plaintext value is shown exactly once at creation. A token carries the permissions of its owning user, resolved live on each request.
+- Login-with-a-code requests are single-use and expire after 5 minutes (the code rotates every 30 seconds with a 60-second grace); codes are stored as HMAC-SHA256 hashes and request tokens as SHA-256 hashes, never in plaintext, and are never logged. Approval is only allowed for an interactive session (API tokens are rejected) and, when `LOGIN_CODE_APPROVE_REQUIRE_PASSWORD=true`, requires the account password (`400 PASSWORD_REQUIRED` / `400 INVALID_CODE`). Redemption issues an ordinary 1-hour session for the approving user, so revocation rules are unchanged; credential-bearing responses carry `Cache-Control: no-store`, and the create/preview/approve routes are rate limited.
 - Sync notification payloads never contain secret values.
 - Authorization resolves the live user and role from the database on every request (cached per request); the role claim in the JWT is never authoritative. Role, scope and password changes and user deletion invalidate existing sessions through the `users.tokenVersion` column, so access changes take effect immediately.
 - Unauthenticated requests answer `401` with a machine-readable `code` (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`); authenticated-but-forbidden requests answer `403` (`FORBIDDEN`). The web UI only logs out on `401`, so a forbidden action shows an inline error instead of ending the session.
