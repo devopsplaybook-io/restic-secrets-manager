@@ -4,10 +4,10 @@
 
 - TypeScript
 - Fastify 5 (REST API)
-- `@devopsplaybook.io/common-utils` (config, database facade, authentication, users management, OTel context)
+- `@devopsplaybook.io/common-utils` (config, database facade, authentication, users management, cross-device login codes, OTel context)
 - `@fastify/rate-limit` (login and session-refresh throttling, `429` + `Retry-After`)
 - `@devopsplaybook.io/otel-utils-fastify` (OpenTelemetry request hooks)
-- SQLite via `better-sqlite3` (default) with optional PostgreSQL support; schema migrations (database version 11) include `users.tokenVersion` for session revocation, `secrets.version` for optimistic concurrency and a cascading `secrets.projectId → projects.id` foreign key (SQLite foreign-key enforcement is enabled after the migrations)
+- SQLite via `better-sqlite3` (default) with optional PostgreSQL support; schema migrations (database version 12) include `users.tokenVersion` for session revocation, `secrets.version` for optimistic concurrency, a cascading `secrets.projectId → projects.id` foreign key (SQLite foreign-key enforcement is enabled after the migrations) and the `users_login_codes` table (hashed, single-use cross-device login codes)
 - Secret updates use a single conditional `UPDATE ... WHERE version = ?` (version incremented in the same statement), which is atomic on both database types
 - `restic` CLI invoked for pull/push operations against S3-compatible repositories, through a `spawn` runner with per-operation timeouts, SIGTERM→SIGKILL escalation and AbortSignal support for client disconnects
 - PostgreSQL advisory locks (via the common-utils database facade) serializing synchronization operations per project across replicas and project creation/name-target checks; SQLite deployments stay single-replica
@@ -21,6 +21,7 @@
 - Pico CSS + Bootstrap Icons
 - `@vite-pwa/nuxt` for PWA support
 - Axios for API calls, `jwt-decode` for token inspection
+- `@devopsplaybook.io/common-web` login-code service and components (`LoginCodeService`, `LoginWithCodeCard`, `AuthorizeDeviceCard`, `LoginCodeInput`) for cross-device login with a code
 - Vitest for unit tests (page logic extracted into tested utilities), ESLint (typescript-eslint) for linting
 - CSS Grid preferred for layout
 
@@ -40,4 +41,4 @@
 - restic child processes receive a minimal allowlisted environment (process, proxy/CA and `AWS_*`/`RESTIC_*` variables plus the project credentials), never the whole server environment, so JWT, database and notification credentials are not exposed
 - `TRUST_PROXY` is `false` in the base manifests and only enabled by the opt-in Ingress overlay when the controller overwrites `X-Forwarded-For`
 
-Last spec review: 2026-11-03
+Last spec review: 2026-11-26

@@ -43,4 +43,14 @@
 - [x] A token authenticates as its owning user with the user's live role and project scopes (resolved per request, so access or role changes apply immediately)
 - [x] The number of API tokens per user is bounded (`API_TOKENS_MAX_PER_USER`)
 
-Last spec review: 2026-11-03
+## Login with a code
+
+- [x] A signed-out device can start a cross-device login and receives an 8-character, single-use code (5-minute lifetime, 30-second rotation with a 60-second grace, 2-second polling, 5 attempts); codes and request tokens are stored only as hashes
+- [x] A signed-in user approves the request from Settings → Account after seeing the requesting device; approval is only allowed for an interactive session, never for an API token (`403 FORBIDDEN`)
+- [x] Password step-up is mandatory in this deployment (`LOGIN_CODE_APPROVE_REQUIRE_PASSWORD=true`): approving requires the account password (`400 PASSWORD_REQUIRED` when missing, `400 INVALID_CODE` when wrong, consuming the attempt)
+- [x] Redemption issues an ordinary 1-hour session for the approving user, so the existing revocation and authorization rules apply unchanged; the code is single-use
+- [x] The feature is disabled by default (`LOGIN_CODE_ENABLED=false`): no routes and no UI when off; `LOGIN_CODE_*` settings are applied at startup
+- [x] Create, preview/approve and poll are rate limited with the standard login-code defaults; credential-bearing responses carry `Cache-Control: no-store`
+- [x] Codes, request tokens, passwords and issued session tokens never appear in logs or audit records (identifiers only)
+
+Last spec review: 2026-11-26

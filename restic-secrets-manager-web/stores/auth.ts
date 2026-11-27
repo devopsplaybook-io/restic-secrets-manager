@@ -109,6 +109,21 @@ export const useAuthStore = defineStore("auth", {
       this.pendingDraft = null;
     },
 
+    /**
+     * Persist a session redeemed through a cross-device login code. The token
+     * is loaded through the canonical `init()` so the user is normalized from
+     * the JWT claims and an invalid token logs out.
+     */
+    setSession(token: string, user: Record<string, unknown> | null) {
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", JSON.stringify(user));
+      this.init();
+      // Same-user draft carried over a re-login (see `login`).
+      this.pendingDraft = takeSecretDraftForUser(
+        String(this.user?.userId ?? ""),
+      );
+    },
+
     logout() {
       this.token = "";
       this.user = null;

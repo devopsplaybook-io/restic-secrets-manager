@@ -1,62 +1,79 @@
 <template>
   <div class="login-container">
-    <article class="login-card">
-      <header>
-        <hgroup>
-          <h1>Secrets Manager</h1>
-          <p v-if="isSetup">Create your admin account to get started</p>
-          <p v-else>Sign in to your account</p>
-        </hgroup>
-      </header>
+    <div class="login-grid">
+      <article class="login-card">
+        <header>
+          <hgroup>
+            <h1>Secrets Manager</h1>
+            <p v-if="isSetup">Create your admin account to get started</p>
+            <p v-else>Sign in to your account</p>
+          </hgroup>
+        </header>
 
-      <form @submit.prevent="handleSubmit">
-        <div v-if="error" class="error-message">{{ error }}</div>
+        <form @submit.prevent="handleSubmit">
+          <div v-if="error" class="error-message">{{ error }}</div>
 
-        <label>
-          Username
-          <input
-            v-model="name"
-            type="text"
-            placeholder="Your username"
-            required
-            autocomplete="username"
-          >
-        </label>
+          <label>
+            Username
+            <input
+              v-model="name"
+              type="text"
+              placeholder="Your username"
+              required
+              autocomplete="username"
+            >
+          </label>
 
-        <label>
-          Password
-          <input
-            v-model="password"
-            type="password"
-            placeholder="Your password"
-            required
-            autocomplete="current-password"
-          >
-        </label>
+          <label>
+            Password
+            <input
+              ref="passwordInput"
+              v-model="password"
+              type="password"
+              placeholder="Your password"
+              required
+              autocomplete="current-password"
+            >
+          </label>
 
-        <label v-if="isSetup">
-          Confirm Password
-          <input
-            v-model="passwordConfirm"
-            type="password"
-            placeholder="Confirm password"
-            required
-            autocomplete="new-password"
-          >
-        </label>
+          <label v-if="isSetup">
+            Confirm Password
+            <input
+              v-model="passwordConfirm"
+              type="password"
+              placeholder="Confirm password"
+              required
+              autocomplete="new-password"
+            >
+          </label>
 
-        <footer>
-          <button type="submit" :aria-busy="loading">
-            {{ isSetup ? "Create Admin Account" : "Login" }}
-          </button>
-        </footer>
-      </form>
-    </article>
+          <footer>
+            <button type="submit" :aria-busy="loading">
+              {{ isSetup ? "Create Admin Account" : "Login" }}
+            </button>
+          </footer>
+        </form>
+      </article>
+
+      <LoginWithCodeCard
+        v-if="showLoginCode"
+        :service="loginCodeService"
+        :heading-level="2"
+        @approved="onCodeApproved"
+        @use-password="focusPassword"
+      />
+    </div>
   </div>
 </template>
 
 <script setup>
+import LoginWithCodeCard from "@devopsplaybook.io/common-web/components/LoginWithCodeCard.vue";
 import api from "../utils/api";
+import {
+  getLoginCodeService,
+  probeLoginCodeAvailability,
+} from "../utils/loginCodes";
+
 const authStore = useAuthStore();
 const router = useRouter();
 
@@ -67,6 +84,13 @@ const loading = ref(false);
 const error = ref("");
 const isSetup = ref(false);
 const checkingInit = ref(true);
+const passwordInput = ref(null);
+
+const loginCodeService = getLoginCodeService();
+const loginCodeEnabled = ref(false);
+const showLoginCode = computed(
+  () => !checkingInit.value && !isSetup.value && loginCodeEnabled.value,
+);
 
 onMounted(async () => {
   authStore.init();
@@ -82,7 +106,20 @@ onMounted(async () => {
     isSetup.value = false;
   }
   checkingInit.value = false;
+  if (!isSetup.value) {
+    loginCodeEnabled.value =
+      await probeLoginCodeAvailability(loginCodeService);
+  }
 });
+
+function onCodeApproved() {
+  // The service already persisted the redeemed session.
+  router.push(postLoginPath());
+}
+
+function focusPassword() {
+  passwordInput.value?.focus();
+}
 
 async function handleSubmit() {
   error.value = "";
@@ -129,9 +166,24 @@ function postLoginPath() {
   min-height: 80vh;
 }
 
+.login-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+  align-items: start;
+  width: 100%;
+  max-width: 900px;
+}
+
 .login-card {
   max-width: 400px;
   width: 100%;
+}
+
+@media (max-width: 900px) {
+  .login-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .error-message {
